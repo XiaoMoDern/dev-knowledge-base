@@ -3,7 +3,7 @@ package main
 import "testing"
 
 func TestNewServerUsesLocalDevelopmentAddress(t *testing.T) {
-	server := newServer()
+	server := newServer(nil)
 
 	if server.Addr != "127.0.0.1:8181" {
 		t.Fatalf("server address = %q, want %q", server.Addr, "127.0.0.1:8181")

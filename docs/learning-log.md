@@ -36,3 +36,78 @@
 - `http.Server` 保存监听地址和请求处理器；`ListenAndServe()` 让它开始接受 HTTP 请求。
 - `if err := ...; err != nil` 把错误值声明和错误判断放在一起，是 Go 的常用错误处理模式。
 - 浏览器成功访问 `/api/health`，证明“浏览器 -> Go 服务 -> 路由 -> JSON 响应”的链路已跑通。
+
+## 2026-07-16：SQLite 自动迁移
+
+- `database/sql` 提供统一数据库接口，空白导入 `_ "modernc.org/sqlite"` 用于注册 SQLite 驱动。
+- `Open()` 不只打开文件，还应执行迁移，保证数据库结构可用。
+- `CREATE TABLE IF NOT EXISTS` 让迁移可重复执行；事务让所有建表操作要么全部成功，要么全部撤销。
+- `sqlite_master` 是 SQLite 的结构目录，测试可查询它来确认表是否真实存在。
+
+## 2026-07-16：项目创建命令和协作方式
+
+- `git init` 创建本地版本库，`go mod init` 创建 Go Module；它们分别管理项目版本和 Go 依赖边界。
+- `New-Item -ItemType Directory` 在 PowerShell 中创建项目目录，`Set-Location` 切换当前工作目录。
+- `go test ./...` 检查当前 Go Module 下的所有包；`npm run build` 检查 Vue 前端的生产构建。
+- 新项目先看 `AGENTS.md`、`project-playbook.md` 和 Git 状态，再开始下一步，避免重复背景或覆盖未提交修改。
+- Codex 负责技术主导和讲解，学习者亲自执行关键命令、编写关键代码并反馈结果。
+
+## 2026-07-16：Go 函数、方法和多返回值
+
+- `func add(a int, b int) int` 是普通函数；参数写在函数名后，最后的 `int` 是返回值类型。
+- `(store *Store)` 是方法接收者，说明方法属于 `Store`；`(input CreateNoteInput)` 才是普通参数。
+- `(Note, error)` 表示函数同时返回业务结果和错误结果，不是前端数组解构。
+- HTTP 处理函数不需要 `Store` 接收者时，可以直接写成 `func healthHandler(response http.ResponseWriter, request *http.Request)`。
+
+## 2026-07-16：Go 切片和 append
+
+- `[]Note` 表示可以保存多条 `Note` 的切片，适合返回数据库列表结果。
+- `notes` 是切片变量，`notes[0]` 才是第一个元素；下标从 `0` 开始。
+- `append(notes, note)` 把元素追加到末尾，并通常写成 `notes = append(notes, note)`。
+- 查询多行数据时，循环每次生成一条 `Note`，再追加到切片，最后返回完整列表。
+
+## 2026-07-16：删除笔记的测试先行设计
+
+- 删除接口使用 `DELETE /api/notes/{id}`，成功返回 `204`，不存在返回 `404`。
+- DELETE 请求会经过路由、handler、store、SQLite，再由 handler 转成 HTTP 响应。
+- `sql.Result.RowsAffected()` 可以判断 SQL 是否真的删除了记录。
+- 本次按“先存储层测试、再存储实现、再 HTTP 测试、最后手动接口验证”的顺序学习。
+
+## 2026-07-17：Go 指针正式入门
+
+- Go 里所有传参都是值传递（复制一份），想让函数改到原值就传地址（指针）进去。
+- 三个符号别混：`*T` 是类型（指针类型）、`&x` 是操作（取地址）、`*p` 是操作（解引用）。
+- JS 的对象默认引用传递，Go 全部是值传递——这是前后端最大的思维差异。
+- `*Store` 用指针接收者的两个原因：方法要修改内部状态、避免每次调用复制整个结构体。
+- 前端类比：JS 里 `function f(o){o.x=1}` 能改到原对象；Go 默认不能，要 `*Obj` 才行。
+
+## 2026-07-17：编辑笔记完整流程
+
+- 同样走 TDD：先写失败测试 → 实现 → 补接口/fake → HTTP 测试 → 手动接口验证。
+- 存储层 `UPDATE` 后再 `SELECT` 一次拿完整 Note，因为 `UPDATE` 只返回受影响行数，不返回行内容。
+- `RowsAffected == 0` 表示"找不到"，是判断存在性的标准做法（和 Delete 同套路）。
+- 状态码对比：Update 成功 200 + body（要回传新数据），Delete 成功 204 + 空 body（没数据要回）。
+- HTTP 处理器四分支：id 非法 400、title 空 400、找不到 404、其它错误 500。
+
+## 2026-07-17：跨 workspace 数据隔离模式
+
+- 所有按 id 查工作空间资源的 SQL 都必须 `WHERE id = ? AND workspace_id = ?`，不能只按 id 查。
+- 这不是性能优化，是安全边界——别的工作空间的 id 就算猜中也不该返回数据。
+- 修改 SQL 加条件要同步检查参数列表：占位符 `?` 数量必须严格等于参数数量。
+- UPDATE 用了 workspace 限定、SELECT 没限定 → 即使 UPDATE 失败，SELECT 也会查到跨 workspace 数据，是真实漏洞。
+
+## 2026-07-17：调试习惯——看服务端日志
+
+- 500 错误优先看 `go run` 终端的服务端日志（带 err 链的输出），不看 Apifox 的 HTTP 响应。
+- HTTP 响应是给用户的友好提示（故意隐藏细节），日志是给开发者的根因。
+- 改完代码两步走：Ctrl+S 保存 → Ctrl+C 停服务 → `go run ./cmd/server` 重启。
+- Go 编译器报错读法：包名 → `file:line:col` → 主句（类型不匹配）→ `have ... want ...` 对比签名。
+
+## 2026-07-17：Go"克制抽象"哲学
+
+- 谚语："A little copying is better than a little dependency"——少量复制胜过少量依赖。
+- "Rule of Three"——重复 3 次再考虑抽象，重复 2 次先忍着。
+- create 和 update 共享 6-8 行 body 解析代码，第一版**不抽**比抽更好：
+  - helper 签名/返回值会变复杂（要返回 title、content、bool、error），可读性下降；
+  - 未来 update 可能变 PATCH（title 可选），helper 反而要重写。
+- 前端抽组件/工具函数的成本收益和 Go 后端不同：前端 UI 复用多，后端逻辑各异，过早抽象会束缚扩展。
