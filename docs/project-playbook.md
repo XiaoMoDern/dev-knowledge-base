@@ -104,6 +104,49 @@
   - 调试 500 错误的正确姿势是看 `go run` 终端的服务端日志，不是看 Apifox 的 HTTP 响应——HTTP 响应是给用户的友好提示，日志才是给开发者的根因。
   - 状态码：Update 成功返回 200 + JSON body（有数据要回传），Delete 成功返回 204 + 空 body（无数据要回传）。
 
+## Step 3.0：前端脚手架
+- 日期：2026-07-20
+- 目标：用 Vite 官方模板在空 `frontend/` 目录初始化 Vue 3 + TypeScript 前端。
+- 执行内容：`Remove-Item -Recurse -Force .\frontend`（清空目录）→ `npm create vite@latest frontend -- --template vue-ts` → `npm install`。
+- 验证：`frontend/package.json` 的 dependencies 是 `vue ^3.5.39`，devDependencies 包含 `vite ^8.1.1` / `vue-tsc ^3.3.5` / `typescript ~6.0.2`；`npm run dev` 启动 Vite 默认页 5173 端口。
+- 设计依据：`docs/superpowers/specs/2026-07-20-frontend-design.md`。
+- 学习点：
+  - Vite 模板的 5 个核心文件：`index.html` / `src/main.ts` / `src/App.vue` / `vite.config.ts` / `tsconfig.json`。
+  - `package.json` 的 `"type": "module"` 让项目成为 ESM 入口，`import` 不再需要 `.ts` 后缀。
+  - 脚手架默认带 `src/components/HelloWorld.vue` 和 `src/style.css` 示例组件，本项目后续会删掉换成自己的组件。
+
+## Step 3.1：Vite 代理 + API client + 健康检查
+- 日期：2026-07-20
+- 目标：让前端能通过相对路径 `/api/*` 调到后端 8181，绕开浏览器同源策略限制；用 fetch wrapper 统一 baseURL 和错误处理；先打通 `/api/health` 一条路径验证全链路。
+- 执行内容：
+  - `vite.config.ts` 增 `server: { proxy: { '/api': 'http://127.0.0.1:8181' } }`。
+  - 新建 `src/api/types.ts`：定义 `Note` / `NoteInput` / `NotesList` 类型，字段名与后端 `store.Note` 的 JSON tag 1:1。
+  - 新建 `src/api/client.ts`：薄 fetch wrapper，导出 `apiGet` / `apiPost` / `apiPut` / `apiDelete` 和 `ApiError` 类；非 2xx 响应读取后端 `{ error }` 字段抛成 `ApiError`；204 走 `undefined as T`。
+  - 新建 `src/api/notes.ts`：先只导出 `getHealth()`，作为打通验证的最小 API。
+  - `src/App.vue` 临时重写为 `onMounted` 调 `getHealth()` 把结果显示在页面上。
+- 验证：浏览器打开 5173，页面显示「后端健康检查：**ok**」；DevTools Network 面板请求 URL 是 `localhost:5173/api/health`、Status 200（**不是** `127.0.0.1:8181`，这是 proxy 生效的证据）。
+- 设计依据：`docs/superpowers/specs/2026-07-20-frontend-design.md` 的「API 对接 / 组件拆分 / 实现顺序 Step 2」章节。
+- 学习点：
+  - Vite dev server proxy 只对 dev 生效；生产环境前端构建后是静态文件，必须由后端同源服务（这一步后面再处理）。
+  - `fetch()` 在 HTTP 4xx/5xx 时**不会 reject**，必须手动 `if (!response.ok) throw`；网络错误才会 reject。
+  - 后端错误响应是 `{ "error": "..." }` JSON；wrapper 用 `response.json()` 解析这个字段抛成 `Error`，让调用方统一 `try/catch`。
+  - 类型契约是前后端的合同：前端 `Note` 的字段名（`categoryId` / `createdAt` / `updatedAt`）必须与后端 Go struct 的 JSON tag 一致，否则 `tsc --noEmit` 报错或运行时字段缺失。
+
+## Step 3.2：CRUD API 函数 + 临时列表验证
+- 日期：2026-07-20
+- 目标：补齐 `listNotes` / `createNote` / `updateNote` / `deleteNote` 四个 CRUD API 函数；在 App.vue 临时显示列表，验证 5 个 API（含 health）全部能联通。
+- 执行内容：
+  - `src/api/notes.ts` 增 4 个函数：`listNotes` / `createNote` / `updateNote` / `deleteNote`；每个都用对应的 `apiGet` / `apiPost` / `apiPut` / `apiDelete`，并以泛型显式标注响应类型。
+  - `src/App.vue` 重写：`onMounted` 调 `listNotes()`，渲染 `<li v-for>` 列表 + `new Date(updatedAt).toLocaleString()` 格式化时间。
+- 验证：用 curl 创建 2-3 条笔记后刷新浏览器 5173，列表正确显示；空数据库时显示"暂无笔记"；Network 面板 `GET /api/notes` 200。
+- 设计依据：`docs/superpowers/specs/2026-07-20-frontend-design.md` 的「API 对接 / 实现顺序 Step 3」章节。
+- 学习点：
+  - TypeScript 泛型 `apiGet<NotesList>` 让 TS 知道 `result.items` 的类型，后端改返回结构时编译期立刻报错。
+  - HTTP 状态码对应：200/201 拿 body；204 wrapper 已用 `undefined as T` 短路；4xx/5xx wrapper 抛 `ApiError`，组件用 `e.message` 展示用户可读错误。
+  - 后端时间字段用 `time.RFC3339` 格式（如 `2026-07-20T11:30:00Z`），前端 `new Date(s).toLocaleString()` 按系统语言和时区显示，零依赖。
+  - `v-if / v-else-if / v-else` 三分支处理 error / 空 / 有数据，模板里直接表达状态机。
+  - 列表渲染用 `<ul>` + `<li v-for="note in notes" :key="note.id">`；`key` 用稳定 id（不是数组 index），后续做删除/排序才不会错位。
+
 ## 命令行手册：从零创建同类项目
 
 下面的命令以 Windows PowerShell 为例。创建新项目时，把 `<project-name>`、`<owner>` 和 `<repo>` 替换成自己的值；不要把尖括号原样输入。

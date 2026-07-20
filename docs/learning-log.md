@@ -111,3 +111,33 @@
   - helper 签名/返回值会变复杂（要返回 title、content、bool、error），可读性下降；
   - 未来 update 可能变 PATCH（title 可选），helper 反而要重写。
 - 前端抽组件/工具函数的成本收益和 Go 后端不同：前端 UI 复用多，后端逻辑各异，过早抽象会束缚扩展。
+
+## 2026-07-20：Vite 开发服务器代理
+- 开发期前端 5173、后端 8181 是不同端口，浏览器同源策略直接拦截跨端口请求。
+- 解决方案：Vite 的 `server.proxy` 配置把匹配前缀的请求在 dev server 侧转发给后端；浏览器看到的 URL 还是同源的 `/api/...`。
+- 关键限制：proxy **只对 dev 生效**。生产环境前端构建后是静态文件，必须由后端同源服务（后续阶段处理）。
+- 配置位置：`vite.config.ts` 的 `defineConfig({ server: { proxy: { '/api': 'http://127.0.0.1:8181' } } })`。
+- 验证方式：DevTools Network 面板看请求 URL 是不是 `localhost:5173/api/...`（不是 8181）——这就是 proxy 生效的证据。
+- 前端类比：Nginx 的 `location /api/ { proxy_pass http://backend; }`——开发期就是把 Nginx 行为搬到 dev server 里。
+
+## 2026-07-20：fetch wrapper 模式
+- 原生 `fetch()` 在 HTTP 4xx/5xx 时**不会 reject**，只有网络错误才 reject；必须手动 `if (!response.ok) throw`。
+- 后端错误响应统一用 `{ "error": "..." }` JSON；wrapper 用 `response.json()` 解析这个字段抛成 `Error`，调用方统一 `try/catch`。
+- DELETE 成功返回 204 No Content，**没有 body**；`response.json()` 会抛错，必须提前 `return undefined as T` 短路掉。
+- 模式：薄 wrapper 导出 `apiGet<T>` / `apiPost<T>` / `apiPut<T>` / `apiDelete`；组件 / composable 不直接 `fetch()`，避免到处复制 baseURL 和错误处理。
+- 前端类比：axios 的 `axios.create({ baseURL })` + 拦截器——但更轻，零依赖，TypeScript 泛型直接表达响应类型。
+- 自定义 `ApiError extends Error` 带 `status` 字段：调用方可以 `if (e instanceof ApiError && e.status === 404)` 做精细处理。
+
+## 2026-07-20：前后端类型契约
+- 前端 `Note` 字段（`id` / `categoryId` / `title` / `content` / `visibility` / `createdAt` / `updatedAt`）必须与后端 Go struct 的 JSON tag 一一对应。
+- 后端 Go 用 `json:"categoryId,omitempty"` → 前端用 `categoryId?: number`（可选 + 数字）；后端 `*int64` 是因为 NULL 也要支持。
+- 时间字段后端用 `time.RFC3339` 格式字符串 → 前端用 `string`；渲染时按需 `new Date(note.createdAt).toLocaleString()` 转换。
+- TS strict 模式会强制你处理所有可选字段；漏一个 `?.` 链就会编译失败，这是前后端契约错误最便宜的发现方式。
+
+## 2026-07-20：TypeScript 泛型与 HTTP 状态码
+- `apiGet<T>(path)` 的 `<T>` 告诉 wrapper 返回类型 T；调用方拿到的 `result.items` 才有类型提示和检查。
+- 后端改返回结构时，TS 编译会立刻报错，比运行时崩早一步发现。
+- HTTP 状态码与前端的对应：200/201 拿 JSON body；204 DELETE 成功无 body（wrapper 已用 `undefined as T` 短路）；4xx/5xx wrapper 抛 `ApiError`，`e.message` 是后端 `error` 字段。
+- 组件可以用 `e instanceof ApiError` + `e.status` 做精细处理，比如 404 走"未找到"分支。
+- 后端时间字段是 RFC3339 字符串（如 `2026-07-20T11:30:00Z`），前端用 `new Date(s).toLocaleString()` 转本地化显示，零依赖。
+
