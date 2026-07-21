@@ -51,7 +51,9 @@ async function onDelete() {
     ElMessage.success('已删除')
     router.push('/')
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e)
+    const msg = e instanceof Error ? e.message : String(e)
+    error.value = msg
+    ElMessage.error(msg)
   }
 }
 
@@ -68,6 +70,9 @@ onMounted(load)
 
     <article v-else-if="note">
       <h1 style="margin: 0;">{{ note.title }}</h1>
+      <p v-if="note.categoryName" style="color: #909399; font-size: 0.875rem; margin: 0.25rem 0 0;">
+        分类：{{ note.categoryName }}
+      </p>
       <p style="color: gray; font-size: 0.875rem; margin: 0.5rem 0 1.5rem;">
         最后更新：{{ new Date(note.updatedAt).toLocaleString() }}
       </p>

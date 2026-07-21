@@ -2,6 +2,7 @@
 export interface Note {
   id: number
   categoryId?: number
+  categoryName?: string
   title: string
   content: string
   visibility: 'private' | 'public'
@@ -10,9 +11,11 @@ export interface Note {
 }
 
 // 创建/编辑笔记的入参：title + content 同时提供
+// categoryId 不传 = 无分类，null 也表示无分类（前端 el-select 的 :value="null"）
 export interface NoteInput {
   title: string
   content: string
+  categoryId?: number | null
 }
 
 // GET /api/notes 列表响应
@@ -40,4 +43,21 @@ export interface ImportResult {
   failed: number
   items: Note[]
   errors: ImportError[]
+}
+
+// 与后端 store.Category 字段名 1:1 对齐（json tag）
+export interface Category {
+  id: number
+  name: string
+  createdAt: string
+}
+
+// GET /api/categories 列表响应
+export interface CategoriesList {
+  items: Category[]
+}
+
+// POST /api/categories 入参：name 必填（后端会 trim 后校验非空）
+export interface CreateCategoryInput {
+  name: string
 }

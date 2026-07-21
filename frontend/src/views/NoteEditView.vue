@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { listNotes, createNote, updateNote } from '../api/notes'
-import type { Note } from '../api/types'
+import { listCategories, createCategory } from '../api/categories'
+import type { Note, Category } from '../api/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -10,11 +12,29 @@ const isEdit = Boolean(route.params.id)
 
 const title = ref<string>('')
 const content = ref<string>('')
+const categoryId = ref<number | null>(null)
 
+const categories = ref<Category[]>([])
 const loading = ref(false)
 const saving = ref(false)
 const error = ref<string>('')
+
 const notFound = ref(false)
+
+// 弹窗：新建分类
+const showNewCategory = ref(false)
+const newCategoryName = ref('')
+const creatingCategory = ref(false)
+
+async function loadCategories() {
+  try {
+    const result = await listCategories()
+    categories.value = result.items
+  } catch (e) {
+    // 分类加载失败不阻塞编辑——只是没分类可选
+    console.error('load categories:', e)
+  }
+}
 
 // 编辑模式从 listNotes 找 id 复用的笔记；找不到走 notFound
 // 不引入后端 getNote 接口，简单项目不值得多一次往返
@@ -32,10 +52,34 @@ async function loadNote() {
     }
     title.value = found.title
     content.value = found.content
+    categoryId.value = found.categoryId ?? null
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   } finally {
     loading.value = false
+  }
+}
+
+async function onCreateCategory() {
+  const name = newCategoryName.value.trim()
+  if (!name) {
+    ElMessage.error('分类名不能为空')
+    return
+  }
+  creatingCategory.value = true
+  try {
+    const created = await createCategory({ name })
+    ElMessage.success(`分类「${created.name}」已创建`)
+    // 重新加载分类列表 + 自动选新分类
+    await loadCategories()
+    categoryId.value = created.id
+    // 关闭弹窗 + 清空输入
+    newCategoryName.value = ''
+    showNewCategory.value = false
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : String(e))
+  } finally {
+    creatingCategory.value = false
   }
 }
 
@@ -47,7 +91,11 @@ async function onSubmit() {
   saving.value = true
   error.value = ''
   try {
-    const input = { title: title.value, content: content.value }
+    const input: { title: string; content: string; categoryId: number | null } = {
+      title: title.value,
+      content: content.value,
+      categoryId: categoryId.value,
+    }
     if (isEdit) {
       await updateNote(Number(route.params.id), input)
     } else {
@@ -56,13 +104,18 @@ async function onSubmit() {
     ElMessage.success(isEdit ? '已保存' : '已创建')
     router.push('/')
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e)
+    const msg = e instanceof Error ? e.message : String(e)
+    error.value = msg
+    ElMessage.error(msg)
   } finally {
     saving.value = false
   }
 }
 
-onMounted(loadNote)
+onMounted(() => {
+  loadCategories()
+  loadNote()
+})
 </script>
 
 <template>
@@ -81,6 +134,26 @@ onMounted(loadNote)
           <el-input v-model="title" placeholder="给笔记起个标题" :disabled="saving" maxlength="200" show-word-limit />
         </el-form-item>
 
+        <el-form-item label="分类">
+          <div style="display: flex; gap: 0.5rem; align-items: center;width: 100%;">
+            <el-select
+              v-model="categoryId"
+              placeholder="选择分类（可选）"
+              clearable
+              :disabled="saving"
+              style="width: 100%; flex: 1;"
+            >
+              <el-option
+                v-for="cat in categories"
+                :key="cat.id"
+                :label="cat.name"
+                :value="cat.id"
+              />
+            </el-select>
+            <el-button :disabled="saving" @click="showNewCategory = true">+ 新建</el-button>
+          </div>
+        </el-form-item>
+
         <el-form-item label="内容">
           <el-input v-model="content" type="textarea" :rows="12" placeholder="写点什么..." :disabled="saving" />
         </el-form-item>
@@ -93,5 +166,24 @@ onMounted(loadNote)
         </div>
       </el-form>
     </template>
+
+    <el-dialog v-model="showNewCategory" title="新建分类" width="400px">
+      <el-form @submit.prevent="onCreateCategory">
+        <el-form-item label="分类名">
+          <el-input
+            v-model="newCategoryName"
+            placeholder="如 Go、Vue、读书笔记"
+            :disabled="creatingCategory"
+            maxlength="30"
+            show-word-limit
+            ref="newCategoryInput"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showNewCategory = false" :disabled="creatingCategory">取消</el-button>
+        <el-button type="primary" :loading="creatingCategory" @click="onCreateCategory">创建</el-button>
+      </template>
+    </el-dialog>
   </main>
 </template>
