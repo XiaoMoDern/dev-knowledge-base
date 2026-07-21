@@ -82,14 +82,20 @@ func (store *Store) CreateNote(input CreateNoteInput) (Note, error) {
 		return Note{}, fmt.Errorf("read created note ID: %w", err)
 	}
 
-	return Note{
-		ID:         noteID,
-		Title:      input.Title,
-		Content:    input.Content,
-		Visibility: "private",
-		CreatedAt:  now,
-		UpdatedAt:  now,
-	}, nil
+	note := Note{
+		ID:           noteID,
+		CategoryName: nil,
+		Title:        input.Title,
+		Content:      input.Content,
+		Visibility:   "private",
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	if categoryIDArg.Valid {
+		note.CategoryID = &categoryIDArg.Int64
+	}
+
+	return note, nil
 }
 
 // 查询笔记列表 ListNotes
