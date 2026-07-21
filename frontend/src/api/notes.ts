@@ -6,9 +6,16 @@ export function getHealth(): Promise<{ status: string }> {
   return apiGet<{ status: string }>('/api/health')
 }
 
-// GET /api/notes —— 列表
+// GET /api/notes —— 列表（全部分类）
 export function listNotes(): Promise<NotesList> {
   return apiGet<NotesList>('/api/notes')
+}
+
+// GET /api/notes?categoryId=N —— 按分类过滤
+// 后端约定：categoryId 必须是正整数（>0），0 / 不传 = 全部
+// "未分类" 单独走 listNotes() + 前端本地过滤（后端没暴露"未分类"语义）
+export function listNotesByCategory(categoryId: number): Promise<NotesList> {
+  return apiGet<NotesList>(`/api/notes?categoryId=${categoryId}`)
 }
 
 // POST /api/notes —— 创建
