@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { listNotes, deleteNote } from '../api/notes'
-import type { Note } from '../api/types'
+import type { Note, ImportResult } from '../api/types'
+import ImportDialog from '../components/ImportDialog.vue'
 
 const notes = ref<Note[]>([])
 const loading = ref(false)
 const error = ref<string>('')
+const importDialogRef = ref<InstanceType<typeof ImportDialog> | null>(null)
 
 async function load() {
   loading.value = true
@@ -21,7 +24,6 @@ async function load() {
 }
 
 async function onDelete(note: Note) {
-  // ElMessageBox.confirm 用户点取消时 reject，catch 一下静默退出
   try {
     await ElMessageBox.confirm(`确定要删除「${note.title}」吗？`, '删除确认', {
       type: 'warning',
@@ -40,6 +42,14 @@ async function onDelete(note: Note) {
   }
 }
 
+async function onImportSuccess(_result: ImportResult) {
+  await load()
+}
+
+function openImport() {
+  importDialogRef.value?.open()
+}
+
 onMounted(load)
 </script>
 
@@ -47,14 +57,17 @@ onMounted(load)
   <main v-loading="loading" style="padding: 2rem; max-width: 800px; margin: 0 auto;">
     <header style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
       <h1 style="margin: 0;">我的笔记</h1>
-      <RouterLink to="/notes/new" style="text-decoration: none;">
-        <el-link type="primary" :underline="false">+ 新建</el-link>
-      </RouterLink>
+      <div style="display: flex; gap: 1rem; align-items: center;">
+        <el-button @click="openImport">导入 .md</el-button>
+        <RouterLink to="/notes/new" style="text-decoration: none;">
+          <el-link type="primary" :underline="false">+ 新建</el-link>
+        </RouterLink>
+      </div>
     </header>
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" style="margin-bottom: 1rem;" />
 
-    <el-empty v-if="!loading && !error && notes.length === 0" description="暂无笔记，点击右上角新建" />
+    <el-empty v-if="!loading && !error && notes.length === 0" description="暂无笔记，点击右上角新建或导入" />
 
     <ul v-if="!loading && !error && notes.length > 0" style="list-style: none; padding: 0; margin: 0;">
       <li
@@ -77,5 +90,7 @@ onMounted(load)
         </div>
       </li>
     </ul>
+
+    <ImportDialog ref="importDialogRef" @success="onImportSuccess" />
   </main>
 </template>

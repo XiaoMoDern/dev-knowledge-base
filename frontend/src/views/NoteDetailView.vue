@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listNotes, deleteNote } from '../api/notes'
 import type { Note } from '../api/types'
+import { renderMarkdown } from '../utils/markdown'
 
 const route = useRoute()
 const router = useRouter()
@@ -10,6 +11,10 @@ const note = ref<Note | null>(null)
 const loading = ref(false)
 const notFound = ref(false)
 const error = ref<string>('')
+
+const renderedContent = computed(() =>
+  note.value ? renderMarkdown(note.value.content) : ''
+)
 
 async function load() {
   loading.value = true
@@ -66,7 +71,7 @@ onMounted(load)
       <p style="color: gray; font-size: 0.875rem; margin: 0.5rem 0 1.5rem;">
         最后更新：{{ new Date(note.updatedAt).toLocaleString() }}
       </p>
-      <div style="white-space: pre-wrap; line-height: 1.6; margin-bottom: 2rem;">{{ note.content }}</div>
+      <div class="markdown-body" v-html="renderedContent"></div>
       <div style="display: flex; gap: 0.5rem;">
         <el-button type="primary" @click="$router.push(`/notes/${note.id}/edit`)">编辑</el-button>
         <el-button type="danger" @click="onDelete">删除</el-button>
@@ -75,3 +80,32 @@ onMounted(load)
     </article>
   </main>
 </template>
+
+<style>
+/* GitHub README 风格的 markdown 样式
+   非 scoped：因为 v-html 注入的 DOM 不带 scope attribute，
+   写 :deep() 反而麻烦；selector 全是 .markdown-body 开头不会污染其他元素 */
+.markdown-body { line-height: 1.7; color: #24292e; word-wrap: break-word; }
+.markdown-body h1 { font-size: 1.8rem; border-bottom: 1px solid #eaecef; padding-bottom: 0.3rem; margin-top: 1.5rem; }
+.markdown-body h2 { font-size: 1.4rem; border-bottom: 1px solid #eaecef; padding-bottom: 0.3rem; margin-top: 1.5rem; }
+.markdown-body h3 { font-size: 1.2rem; margin-top: 1.5rem; }
+.markdown-body p { margin: 0.8rem 0; }
+.markdown-body code {
+  background: #f6f8fa; padding: 0.2em 0.4em; border-radius: 3px;
+  font-size: 0.9em; font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace;
+}
+.markdown-body pre {
+  background: #f6f8fa; padding: 1rem; border-radius: 6px; overflow-x: auto;
+  line-height: 1.5;
+}
+.markdown-body pre code { background: transparent; padding: 0; font-size: 0.9em; }
+.markdown-body blockquote {
+  border-left: 4px solid #dfe2e5; color: #6a737d; padding: 0 1rem; margin: 1rem 0;
+}
+.markdown-body ul, .markdown-body ol { padding-left: 2rem; }
+.markdown-body a { color: #0366d6; text-decoration: none; }
+.markdown-body a:hover { text-decoration: underline; }
+.markdown-body table { border-collapse: collapse; margin: 1rem 0; }
+.markdown-body table th, .markdown-body table td { border: 1px solid #dfe2e5; padding: 0.4rem 0.8rem; }
+.markdown-body hr { border: 0; border-top: 1px solid #eaecef; }
+</style>
