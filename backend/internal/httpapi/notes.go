@@ -18,8 +18,9 @@ type notesHandler struct {
 
 func (handler notesHandler) create(response http.ResponseWriter, request *http.Request) {
 	var input struct {
-		Title   string `json:"title"`
-		Content string `json:"content"`
+		Title      string `json:"title"`
+		Content    string `json:"content"`
+		CategoryID *int64 `json:"categoryId"`
 	}
 
 	decoder := json.NewDecoder(request.Body)
@@ -36,8 +37,9 @@ func (handler notesHandler) create(response http.ResponseWriter, request *http.R
 	}
 
 	note, err := handler.notesStore.CreateNote(store.CreateNoteInput{
-		Title:   input.Title,
-		Content: input.Content,
+		Title:      input.Title,
+		Content:    input.Content,
+		CategoryID: input.CategoryID,
 	})
 	if err != nil {
 		writeJSON(response, http.StatusInternalServerError, map[string]string{"error": "创建笔记失败"})
@@ -50,7 +52,29 @@ func (handler notesHandler) create(response http.ResponseWriter, request *http.R
 }
 
 func (handler notesHandler) list(response http.ResponseWriter, request *http.Request) {
-	notes, err := handler.notesStore.ListNotes()
+	// 解析 ?categoryId=N query 参数
+	var categoryID *int64
+	if raw := request.URL.Query().Get("categoryId"); raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || parsed < 0 {
+			writeJSON(response, http.StatusBadRequest, map[string]string{"error": "categoryId 必须是非负整数"})
+			return
+		}
+		if parsed > 0 {
+			categoryID = &parsed
+		}
+	}
+	var (
+		notes []store.Note
+		err   error
+	)
+	if categoryID != nil {
+		notes, err = handler.notesStore.ListNotesByCategory(*categoryID)
+	} else {
+		notes, err = handler.notesStore.ListNotes()
+	}
+
+	//notes, err := handler.notesStore.ListNotes()
 	if err != nil {
 		writeJSON(response, http.StatusInternalServerError, map[string]string{"error": "查询笔记失败"})
 		return
@@ -93,8 +117,9 @@ func (handler notesHandler) update(response http.ResponseWriter, request *http.R
 		return
 	}
 	var input struct {
-		Title   string `json:"title"`
-		Content string `json:"content"`
+		Title      string `json:"title"`
+		Content    string `json:"content"`
+		CategoryID *int64 `json:"categoryId"`
 	}
 	decoder := json.NewDecoder(request.Body)
 	decoder.DisallowUnknownFields()
@@ -110,8 +135,9 @@ func (handler notesHandler) update(response http.ResponseWriter, request *http.R
 	}
 
 	note, err := handler.notesStore.UpdateNote(noteID, store.UpdateNoteInput{
-		Title:   input.Title,
-		Content: input.Content,
+		Title:      input.Title,
+		Content:    input.Content,
+		CategoryID: input.CategoryID,
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		writeJSON(response, http.StatusNotFound, map[string]string{"error": "笔记不存在"})

@@ -13,10 +13,10 @@ import (
 
 const databasePath = "data/dev-notes.db"
 
-func newServer(notesStore httpapi.NotesStore) *http.Server {
+func newServer(notesStore httpapi.NotesStore, categoriesStore httpapi.CategoryStore) *http.Server {
 	return &http.Server{
 		Addr:    "127.0.0.1:8181",
-		Handler: httpapi.NewHandler(notesStore),
+		Handler: httpapi.NewHandler(notesStore, categoriesStore),
 	}
 }
 
@@ -40,7 +40,7 @@ func main() {
 	}
 	defer database.Close()
 
-	server := newServer(database)
+	server := newServer(database, database)
 
 	log.Printf("server listening on http://%s", server.Addr)
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestStoreCreatesAndListsNotes(t *testing.T) {
@@ -237,5 +238,146 @@ func TestStoreUpdateMissingNoteReturnsErrNoRows(t *testing.T) {
 	})
 	if !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("update missing note err = %v, want sql.ErrNoRows", err)
+	}
+}
+
+// TestStoreListsNotesWithCategoryName 验证 ListNotes 的 LEFT JOIN：
+// 关联分类的 note 应带 CategoryName，没分类的应是 nil。
+// 当前 ListNotes 还没加 JOIN，CategoryName 永远是 nil —— Red。
+func TestStoreListsNotesWithCategoryName(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "dev-notes.db")
+	database, err := Open(databasePath)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("close database: %v", err)
+		}
+	})
+
+	// 1. 建分类
+	category, err := database.CreateCategory("Go")
+	if err != nil {
+		t.Fatalf("create category: %v", err)
+	}
+
+	// 2. 直接 SQL 插 2 个 note（CreateNote 还没支持 categoryId，绕开 store 接口）
+	workspaceID, err := database.defaultWorkspaceID()
+	if err != nil {
+		t.Fatalf("find workspace: %v", err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+
+	// 2a. 关联 "Go" 的 note
+	_, err = database.db.Exec(`
+		INSERT INTO notes (workspace_id, category_id, title, content, visibility, created_at, updated_at)
+		VALUES (?, ?, 'Go 笔记', '内容', 'private', ?, ?)
+	`, workspaceID, category.ID, now, now)
+	if err != nil {
+		t.Fatalf("insert note with category: %v", err)
+	}
+
+	// 2b. 没分类的 note（category_id 显式 NULL）
+	_, err = database.db.Exec(`
+		INSERT INTO notes (workspace_id, category_id, title, content, visibility, created_at, updated_at)
+		VALUES (?, NULL, '无分类笔记', '内容', 'private', ?, ?)
+	`, workspaceID, now, now)
+	if err != nil {
+		t.Fatalf("insert note without category: %v", err)
+	}
+
+	// 3. ListNotes
+	notes, err := database.ListNotes()
+	if err != nil {
+		t.Fatalf("list notes: %v", err)
+	}
+	if len(notes) != 2 {
+		t.Fatalf("note count = %d, want 2", len(notes))
+	}
+
+	// 4. 断言 CategoryName
+	// 排序按 updated_at DESC 同秒、id DESC —— 后插的"无分类笔记"在前
+	if notes[0].CategoryName != nil {
+		t.Fatalf("first note (无分类) CategoryName = %q, want nil", *notes[0].CategoryName)
+	}
+	if notes[1].CategoryName == nil || *notes[1].CategoryName != "Go" {
+		t.Fatalf("second note (Go 笔记) CategoryName = %v, want %q", notes[1].CategoryName, "Go")
+	}
+}
+
+// TestStoreListsNotesByCategory 验证按分类过滤：
+// 关联 cat1 的 note 出现，关联 cat2 的 note 不出现，没分类的 note 不出现。
+// 当前 ListNotesByCategory 还没实现 —— Red。
+func TestStoreListsNotesByCategory(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "dev-notes.db")
+	database, err := Open(databasePath)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("close database: %v", err)
+		}
+	})
+
+	// 1. 建 2 个分类
+	catGo, err := database.CreateCategory("Go")
+	if err != nil {
+		t.Fatalf("create category Go: %v", err)
+	}
+	catVue, err := database.CreateCategory("Vue")
+	if err != nil {
+		t.Fatalf("create category Vue: %v", err)
+	}
+
+	// 2. 直接 SQL 插 3 个 note（绕过 CreateNote 限制）
+	workspaceID, err := database.defaultWorkspaceID()
+	if err != nil {
+		t.Fatalf("find workspace: %v", err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+
+	// 2a. 关联 Go
+	_, err = database.db.Exec(`
+		INSERT INTO notes (workspace_id, category_id, title, content, visibility, created_at, updated_at)
+		VALUES (?, ?, 'Go 入门', '', 'private', ?, ?)
+	`, workspaceID, catGo.ID, now, now)
+	if err != nil {
+		t.Fatalf("insert note for Go: %v", err)
+	}
+
+	// 2b. 关联 Vue
+	_, err = database.db.Exec(`
+		INSERT INTO notes (workspace_id, category_id, title, content, visibility, created_at, updated_at)
+		VALUES (?, ?, 'Vue 入门', '', 'private', ?, ?)
+	`, workspaceID, catVue.ID, now, now)
+	if err != nil {
+		t.Fatalf("insert note for Vue: %v", err)
+	}
+
+	// 2c. 没分类
+	_, err = database.db.Exec(`
+		INSERT INTO notes (workspace_id, category_id, title, content, visibility, created_at, updated_at)
+		VALUES (?, NULL, '无分类笔记', '', 'private', ?, ?)
+	`, workspaceID, now, now)
+	if err != nil {
+		t.Fatalf("insert note without category: %v", err)
+	}
+
+	// 3. ListNotesByCategory(Go) —— 应该只返回 "Go 入门"
+	notes, err := database.ListNotesByCategory(catGo.ID)
+	if err != nil {
+		t.Fatalf("list notes by category Go: %v", err)
+	}
+	if len(notes) != 1 {
+		t.Fatalf("note count for Go = %d, want 1", len(notes))
+	}
+	if notes[0].Title != "Go 入门" {
+		t.Fatalf("first note title = %q, want %q", notes[0].Title, "Go 入门")
+	}
+	// 复用 JOIN：CategoryName 应该 = "Go"
+	if notes[0].CategoryName == nil || *notes[0].CategoryName != "Go" {
+		t.Fatalf("first note CategoryName = %v, want %q", notes[0].CategoryName, "Go")
 	}
 }

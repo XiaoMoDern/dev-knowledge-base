@@ -8,24 +8,27 @@ import (
 )
 
 type Note struct {
-	ID         int64  `json:"id"`
-	CategoryID *int64 `json:"categoryId,omitempty"`
-	Title      string `json:"title"`
-	Content    string `json:"content"`
-	Visibility string `json:"visibility"`
-	CreatedAt  string `json:"createdAt"`
-	UpdatedAt  string `json:"updatedAt"`
+	ID           int64   `json:"id"`
+	CategoryID   *int64  `json:"categoryId,omitempty"`
+	CategoryName *string `json:"categoryName,omitempty"`
+	Title        string  `json:"title"`
+	Content      string  `json:"content"`
+	Visibility   string  `json:"visibility"`
+	CreatedAt    string  `json:"createdAt"`
+	UpdatedAt    string  `json:"updatedAt"`
 }
 
 type CreateNoteInput struct {
-	Title   string
-	Content string
+	Title      string
+	Content    string
+	CategoryID *int64
 }
 
 // 编辑笔记的输入：标题和正文必须同时提供。
 type UpdateNoteInput struct {
-	Title   string
-	Content string
+	Title      string
+	Content    string
+	CategoryID *int64
 }
 
 // ImportNoteInput 是批量导入的单条输入
@@ -60,12 +63,16 @@ func (store *Store) CreateNote(input CreateNoteInput) (Note, error) {
 	}
 
 	//生成时间戳
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	categoryIDArg := sql.NullInt64{}
+	if input.CategoryID != nil {
+		categoryIDArg = sql.NullInt64{Int64: *input.CategoryID, Valid: true}
+	}
 	//执行sql插入
 	result, err := store.db.Exec(`
-		INSERT INTO notes (workspace_id, title, content, visibility, created_at, updated_at)
-		VALUES (?, ?, ?, 'private', ?, ?)
-	`, workspaceID, input.Title, input.Content, now, now)
+		INSERT INTO notes (workspace_id, category_id, title, content, visibility, created_at, updated_at)
+		VALUES (?, ?, ?, ?, 'private', ?, ?)
+	`, workspaceID, categoryIDArg, input.Title, input.Content, now, now)
 	if err != nil {
 		return Note{}, fmt.Errorf("create note: %w", err)
 	}
@@ -92,11 +99,19 @@ func (store *Store) ListNotes() ([]Note, error) {
 		return nil, err
 	}
 
+	// 单表查询
+	// SELECT id, category_id, title, content, visibility, created_at, updated_at
+	// FROM notes
+	// WHERE workspace_id = ?
+	// ORDER BY updated_at DESC, id DESC
+
+	// 联表查询 （后端把数据拼好，前端只负责展示）
 	rows, err := store.db.Query(`
-		SELECT id, category_id, title, content, visibility, created_at, updated_at
-		FROM notes
-		WHERE workspace_id = ?
-		ORDER BY updated_at DESC, id DESC
+		SELECT n.id, n.category_id, c.name AS category_name, n.title, n.content, n.visibility, n.created_at, n.updated_at
+		FROM notes n
+		LEFT JOIN categories c ON n.category_id = c.id
+		WHERE n.workspace_id = ?
+		ORDER BY n.updated_at DESC, n.id DESC
 	`, workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("list notes: %w", err)
@@ -107,10 +122,12 @@ func (store *Store) ListNotes() ([]Note, error) {
 	for rows.Next() {
 		var note Note
 		var categoryID sql.NullInt64
+		var categoryName sql.NullString
 
 		if err := rows.Scan(
 			&note.ID,
 			&categoryID,
+			&categoryName,
 			&note.Title,
 			&note.Content,
 			&note.Visibility,
@@ -121,6 +138,9 @@ func (store *Store) ListNotes() ([]Note, error) {
 		}
 		if categoryID.Valid {
 			note.CategoryID = &categoryID.Int64
+		}
+		if categoryName.Valid {
+			note.CategoryName = &categoryName.String
 		}
 
 		notes = append(notes, note)
@@ -162,20 +182,36 @@ func (store *Store) DeleteNote(noteID int64) error {
 }
 
 // 更新笔记
+
 func (store *Store) UpdateNote(noteID int64, input UpdateNoteInput) (Note, error) {
 
+	//Exec  →  Execute（执行命令，不期望返回数据）
+	//Query →  查询（期望返回数据）
+	//增删改 → Exec
+	//查     → Query
 	workspaceID, err := store.defaultWorkspaceID()
 	if err != nil {
 		return Note{}, err
 	}
 
 	// 每次更新都重新生成 updated_at
-	now := time.Now().UTC().Format(time.RFC3339)
-	result, err := store.db.Exec(`
-		UPDATE notes
-		SET title = ?, content = ?, updated_at = ?
-		WHERE id = ? AND workspace_id = ?
-	`, input.Title, input.Content, now, noteID, workspaceID)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	var result sql.Result
+
+	if input.CategoryID != nil {
+		result, err = store.db.Exec(`
+			UPDATE notes
+			SET title = ?, content = ?, category_id = ?, updated_at = ?
+			WHERE id = ? AND workspace_id = ?
+		`, input.Title, input.Content, *input.CategoryID, now, noteID, workspaceID)
+	} else {
+		result, err = store.db.Exec(`
+			UPDATE notes
+			SET title = ?, content = ?, updated_at = ?
+			WHERE id = ? AND workspace_id = ?
+		`, input.Title, input.Content, now, noteID, workspaceID)
+	}
+
 	if err != nil {
 		return Note{}, fmt.Errorf("update note: %w", err)
 	}
@@ -196,13 +232,18 @@ func (store *Store) UpdateNote(noteID int64, input UpdateNoteInput) (Note, error
 	// 就再 SELECT 一次。
 	var note Note
 	var categoryID sql.NullInt64
+	var categoryName sql.NullString
+
 	err = store.db.QueryRow(`
-		SELECT id, category_id, title, content, visibility, created_at, updated_at
-		FROM notes
-		WHERE id = ? AND workspace_id = ?
+		SELECT n.id, n.category_id, c.name AS category_name, n.title, n.content, n.visibility, n.created_at, n.updated_at
+	    FROM notes n
+		LEFT JOIN categories c ON n.category_id = c.id
+		WHERE n.id = ? AND n.workspace_id = ?
+		ORDER BY n.updated_at DESC ,n.id DESC 
 	`, noteID, workspaceID).Scan(
 		&note.ID,
 		&categoryID,
+		&categoryName,
 		&note.Title,
 		&note.Content,
 		&note.Visibility,
@@ -214,6 +255,9 @@ func (store *Store) UpdateNote(noteID int64, input UpdateNoteInput) (Note, error
 	}
 	if categoryID.Valid {
 		note.CategoryID = &categoryID.Int64
+	}
+	if categoryName.Valid {
+		note.CategoryName = &categoryName.String
 	}
 
 	return note, nil
@@ -269,7 +313,7 @@ func (store *Store) ImportNotes(notes []ImportNoteInput) (ImportResult, error) {
 	}
 	defer tx.Rollback()
 
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
 	for _, note := range validNotes {
 		execResult, err := tx.Exec(`
             INSERT INTO notes (workspace_id, title, content, visibility, created_at, updated_at)
@@ -302,6 +346,60 @@ func (store *Store) ImportNotes(notes []ImportNoteInput) (ImportResult, error) {
 	}
 
 	return result, nil
+}
+
+func (store *Store) ListNotesByCategory(categoryID int64) ([]Note, error) {
+	workspaceID, err := store.defaultWorkspaceID()
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := store.db.Query(`
+		SELECT n.id, n.category_id, c.name AS category_name, n.title, n.content, n.visibility, n.created_at, n.updated_at
+		FROM notes n
+		LEFT JOIN categories c ON n.category_id = c.id
+		WHERE n.workspace_id = ? AND n.category_id = ?
+		ORDER BY n.updated_at DESC, n.id DESC
+	`, workspaceID, categoryID)
+	if err != nil {
+		return nil, fmt.Errorf("list notes by category: %w", err)
+	}
+	defer rows.Close()
+
+	notes := make([]Note, 0)
+	for rows.Next() {
+		// 参数 categoryID 跟这里同名——Go 的 shadow（内层覆盖外层）
+		var note Note
+		var categoryID sql.NullInt64
+		var categoryName sql.NullString
+
+		if err := rows.Scan(
+			&note.ID,
+			&categoryID,
+			&categoryName,
+			&note.Title,
+			&note.Content,
+			&note.Visibility,
+			&note.CreatedAt,
+			&note.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan note: %w", err)
+		}
+		if categoryID.Valid {
+			note.CategoryID = &categoryID.Int64
+		}
+		if categoryName.Valid {
+			note.CategoryName = &categoryName.String
+		}
+
+		notes = append(notes, note)
+
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate notes: %w", err)
+	}
+
+	return notes, nil
 }
 
 // 获取默认工作区ID -> 这个方法通过用户名和工作区名查找工作区ID

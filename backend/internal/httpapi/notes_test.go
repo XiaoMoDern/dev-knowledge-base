@@ -54,9 +54,21 @@ func (fake *fakeNotesStore) UpdateNote(noteID int64, input store.UpdateNoteInput
 	return store.Note{}, sql.ErrNoRows
 }
 
+// ListNotesByCategory 是 fake 实现：跟真 store 行为一致——只返 category_id 匹配的。
+// 注：category_id == 0 / nil 的 note 不算"匹配任何分类"，所以 0 不在结果里。
+func (fake *fakeNotesStore) ListNotesByCategory(categoryID int64) ([]store.Note, error) {
+	var filtered []store.Note
+	for _, note := range fake.notes {
+		if note.CategoryID != nil && *note.CategoryID == categoryID {
+			filtered = append(filtered, note)
+		}
+	}
+	return filtered, nil
+}
+
 func TestNotesHandlerCreatesAndListsNotes(t *testing.T) {
 	notesStore := &fakeNotesStore{}
-	handler := NewHandler(notesStore)
+	handler := NewHandler(notesStore, nil)
 
 	createRequest := httptest.NewRequest(
 		http.MethodPost,
@@ -101,7 +113,7 @@ func TestNotesHandlerCreatesAndListsNotes(t *testing.T) {
 }
 
 func TestNotesHandlerRejectsBlankTitle(t *testing.T) {
-	handler := NewHandler(&fakeNotesStore{})
+	handler := NewHandler(&fakeNotesStore{}, nil)
 	request := httptest.NewRequest(http.MethodPost, "/api/notes", bytes.NewBufferString(`{"title":"   ","content":"正文"}`))
 	response := httptest.NewRecorder()
 
@@ -115,7 +127,7 @@ func TestNotesHandlerRejectsBlankTitle(t *testing.T) {
 func TestNotesHandlerDeletesNote(t *testing.T) {
 	notesStore := &fakeNotesStore{}
 	notesStore.notes = append(notesStore.notes, store.Note{ID: 1, Title: "待删除", Content: "内容"})
-	handler := NewHandler(notesStore)
+	handler := NewHandler(notesStore, nil)
 
 	request := httptest.NewRequest(http.MethodDelete, "/api/notes/1", nil)
 	response := httptest.NewRecorder()
@@ -133,7 +145,7 @@ func TestNotesHandlerDeletesNote(t *testing.T) {
 }
 
 func TestNotesHandlerRejectsInvalidDeleteID(t *testing.T) {
-	handler := NewHandler(&fakeNotesStore{})
+	handler := NewHandler(&fakeNotesStore{}, nil)
 
 	for _, rawID := range []string{"0", "-1", "abc"} {
 		request := httptest.NewRequest(http.MethodDelete, "/api/notes/"+rawID, nil)
@@ -147,7 +159,7 @@ func TestNotesHandlerRejectsInvalidDeleteID(t *testing.T) {
 }
 
 func TestNotesHandlerDeleteMissingNoteReturns404(t *testing.T) {
-	handler := NewHandler(&fakeNotesStore{})
+	handler := NewHandler(&fakeNotesStore{}, nil)
 
 	request := httptest.NewRequest(http.MethodDelete, "/api/notes/999", nil)
 	response := httptest.NewRecorder()
@@ -161,7 +173,7 @@ func TestNotesHandlerDeleteMissingNoteReturns404(t *testing.T) {
 func TestNotesHandlerUpdatesNote(t *testing.T) {
 	notesStore := &fakeNotesStore{}
 	notesStore.notes = append(notesStore.notes, store.Note{ID: 1, Title: "原标题", Content: "原内容"})
-	handler := NewHandler(notesStore)
+	handler := NewHandler(notesStore, nil)
 
 	request := httptest.NewRequest(
 		http.MethodPut,
@@ -188,7 +200,7 @@ func TestNotesHandlerUpdatesNote(t *testing.T) {
 }
 
 func TestNotesHandlerRejectsInvalidUpdateID(t *testing.T) {
-	handler := NewHandler(&fakeNotesStore{})
+	handler := NewHandler(&fakeNotesStore{}, nil)
 
 	for _, rawID := range []string{"0", "-1", "abc"} {
 		request := httptest.NewRequest(http.MethodPut, "/api/notes/"+rawID, bytes.NewBufferString(`{"title":"x","content":"y"}`))
@@ -204,7 +216,7 @@ func TestNotesHandlerRejectsInvalidUpdateID(t *testing.T) {
 func TestNotesHandlerUpdateBlankTitle(t *testing.T) {
 	notesStore := &fakeNotesStore{}
 	notesStore.notes = append(notesStore.notes, store.Note{ID: 1, Title: "原", Content: "原"})
-	handler := NewHandler(notesStore)
+	handler := NewHandler(notesStore, nil)
 
 	request := httptest.NewRequest(http.MethodPut, "/api/notes/1", bytes.NewBufferString(`{"title":"   ","content":"y"}`))
 	response := httptest.NewRecorder()
@@ -252,7 +264,7 @@ func (f *fakeNotesStore) ImportNotes(inputs []store.ImportNoteInput) (store.Impo
 }
 
 func TestNotesHandlerUpdateMissingNoteReturns404(t *testing.T) {
-	handler := NewHandler(&fakeNotesStore{})
+	handler := NewHandler(&fakeNotesStore{}, nil)
 
 	request := httptest.NewRequest(http.MethodPut, "/api/notes/999", bytes.NewBufferString(`{"title":"x","content":"y"}`))
 	response := httptest.NewRecorder()
@@ -260,5 +272,53 @@ func TestNotesHandlerUpdateMissingNoteReturns404(t *testing.T) {
 
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("update missing note status code = %d, want %d", response.Code, http.StatusNotFound)
+	}
+}
+
+// TestNotesHandlerListsByCategory 验证 ?categoryId=N query 参数。
+// 当前 notesHandler.list 不解析 query —— Red。
+func TestNotesHandlerListsByCategory(t *testing.T) {
+	catID := int64(1)
+	notesStore := &fakeNotesStore{}
+	notesStore.notes = append(notesStore.notes,
+		store.Note{ID: 1, Title: "Go 入门", CategoryID: &catID},
+		store.Note{ID: 2, Title: "Vue 入门", CategoryID: nil},
+	)
+	handler := NewHandler(notesStore, nil)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/notes?categoryId=1", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("list by category status code = %d, want %d", response.Code, http.StatusOK)
+	}
+
+	var body struct {
+		Items []store.Note `json:"items"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.Items) != 1 {
+		t.Fatalf("listed note count = %d, want 1", len(body.Items))
+	}
+	if body.Items[0].ID != 1 {
+		t.Fatalf("listed note ID = %d, want 1", body.Items[0].ID)
+	}
+}
+
+// TestNotesHandlerRejectsInvalidCategoryID 验证 ?categoryId= 非整数 / 负数 → 400
+func TestNotesHandlerRejectsInvalidCategoryID(t *testing.T) {
+	handler := NewHandler(&fakeNotesStore{}, nil)
+
+	for _, raw := range []string{"abc", "-1"} {
+		request := httptest.NewRequest(http.MethodGet, "/api/notes?categoryId="+raw, nil)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("categoryId=%q status code = %d, want %d", raw, response.Code, http.StatusBadRequest)
+		}
 	}
 }

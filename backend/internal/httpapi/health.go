@@ -9,12 +9,18 @@ import (
 type NotesStore interface {
 	CreateNote(store.CreateNoteInput) (store.Note, error)
 	ListNotes() ([]store.Note, error)
+	ListNotesByCategory(int64) ([]store.Note, error)
 	DeleteNote(int64) error
 	UpdateNote(int64, store.UpdateNoteInput) (store.Note, error)
 	ImportNotes([]store.ImportNoteInput) (store.ImportResult, error)
 }
 
-func NewHandler(notesStore NotesStore) http.Handler {
+type CategoryStore interface {
+	CreateCategory(name string) (store.Category, error)
+	ListCategories() ([]store.Category, error)
+}
+
+func NewHandler(notesStore NotesStore, categoriesStore CategoryStore) http.Handler {
 	router := http.NewServeMux()
 	notes := notesHandler{notesStore: notesStore}
 
@@ -25,6 +31,10 @@ func NewHandler(notesStore NotesStore) http.Handler {
 	router.HandleFunc("DELETE /api/notes/{id}", notes.delete)
 	router.HandleFunc("PUT /api/notes/{id}", notes.update)
 	router.HandleFunc("POST /api/notes/import", notes.importBatch)
+
+	categories := categoryHandler{categoriesStore: categoriesStore}
+	router.HandleFunc("GET /api/categories", categories.list)
+	router.HandleFunc("POST /api/categories", categories.create)
 
 	return router
 }
