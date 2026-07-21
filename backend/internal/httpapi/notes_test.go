@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/XiaoMoDern/dev-knowledge-base/backend/internal/store"
@@ -212,6 +213,42 @@ func TestNotesHandlerUpdateBlankTitle(t *testing.T) {
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("update blank title status code = %d, want %d", response.Code, http.StatusBadRequest)
 	}
+}
+
+// fake 的 ImportNotes：不做事务（test fixture 不需要事务边界）
+// 行为和真 Store 一样：title 空记 Errors，合法 append 进切片
+func (f *fakeNotesStore) ImportNotes(inputs []store.ImportNoteInput) (store.ImportResult, error) {
+	result := store.ImportResult{
+		Items:  make([]store.Note, 0),
+		Errors: make([]store.ImportError, 0),
+	}
+	nextID := int64(len(f.notes) + 100) // 偏移 ID 避免和真实数据冲突
+	for i, input := range inputs {
+		// 注意：fake 的校验要和真 store 保持一致，否则 httpapi 测出来
+		// 的状态码和真接口对不上
+		if strings.TrimSpace(input.Title) == "" {
+			result.Failed++
+			result.Errors = append(result.Errors, store.ImportError{
+				Index:  i,
+				Title:  input.Title,
+				Reason: "title 不能为空",
+			})
+			continue
+		}
+		note := store.Note{
+			ID:         nextID,
+			Title:      strings.TrimSpace(input.Title),
+			Content:    input.Content,
+			Visibility: "private",
+			CreatedAt:  "2026-07-20T00:00:00Z",
+			UpdatedAt:  "2026-07-20T00:00:00Z",
+		}
+		f.notes = append(f.notes, note)
+		result.Imported++
+		result.Items = append(result.Items, note)
+		nextID++
+	}
+	return result, nil
 }
 
 func TestNotesHandlerUpdateMissingNoteReturns404(t *testing.T) {

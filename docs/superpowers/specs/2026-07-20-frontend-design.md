@@ -97,9 +97,9 @@ export interface NoteInput {
 
 ## 实现顺序（教学步骤）
 
-按"先跑通骨架、再加功能、再打磨"的顺序，每步杨同学亲自执行命令或编写关键代码：
+按"先跑通骨架、再加功能、再打磨"的顺序，每步Ray亲自执行命令或编写关键代码：
 
-1. **脚手架**：在 `F:\dev-knowledge-base\dev-notebook` 下执行 `npm create vite@latest frontend -- --template vue-ts`，杨同学跑；删掉模板里 `HelloWorld.vue` / `style.css` 等示例文件。
+1. **脚手架**：在 `F:\dev-knowledge-base\dev-notebook` 下执行 `npm create vite@latest frontend -- --template vue-ts`，Ray跑；删掉模板里 `HelloWorld.vue` / `style.css` 等示例文件。
 2. **代理 + 跑通健康检查**：`vite.config.ts` 配 proxy，把 `/api` 转发到 `127.0.0.1:8181`；写 `api/client.ts` 和 `api/notes.ts` 的 `health()` 验证联通（`getHealth()` 调 `/api/health`，返回 `ok`）。
 3. **类型 + API 五个函数**：写 `api/types.ts` + `api/notes.ts` 五个函数（`listNotes / getNote / createNote / updateNote / deleteNote`），其中 `getNote` 暂时后端没有，先在 API 层 stub 一个返回 `null` 的版本（占位；或者这一版不做单独 getNote，编辑模式直接走 list 找到 id）。
 4. **路由 + 三个 View 骨架**：`router.ts` + `NoteListView.vue` / `NoteEditView.vue` / `NotFoundView.vue` 的最简版（先只显示标题，不接 API）。

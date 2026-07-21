@@ -140,6 +140,85 @@ func TestStoreUpdatesNote(t *testing.T) {
 
 }
 
+func TestStoreImportsNotes(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "dev-notes.db")
+	database, err := Open(databasePath)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("close database: %v", err)
+		}
+	})
+
+	notes := []ImportNoteInput{
+		{Title: "笔记一", Content: "内容一"},
+		{Title: "笔记二", Content: "内容二"},
+		{Title: "笔记三", Content: "内容三"},
+	}
+	result, err := database.ImportNotes(notes)
+	if err != nil {
+		t.Fatalf("import notes: %v", err)
+	}
+
+	//断言
+	if result.Imported != 3 {
+		t.Fatalf("Imported = %d, want 3", result.Imported)
+	}
+	if result.Failed != 0 {
+		t.Fatalf("Failed = %d, want 0", result.Failed)
+	}
+	if len(result.Items) != 3 {
+		t.Fatalf("len(Items) = %d, want 3", len(result.Items))
+	}
+
+	if len(result.Errors) != 0 {
+		t.Fatalf("len(Errors) = %d, want 0", len(result.Errors))
+	}
+
+}
+
+func TestStoreImportSkipsInvalidNotes(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "dev-notes.db")
+	database, err := Open(databasePath)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("close database: %v", err)
+		}
+	})
+
+	notes := []ImportNoteInput{
+		{Title: "笔记一", Content: "内容一"},
+		{Title: "", Content: "内容二"}, // 空 title 应该被记到 Errors
+		{Title: "笔记三", Content: "内容三"},
+	}
+	result, err := database.ImportNotes(notes)
+	if err != nil {
+		t.Fatalf("import notes: %v", err)
+	}
+
+	if result.Imported != 2 {
+		t.Fatalf("Imported = %d, want 2", result.Imported)
+	}
+	if result.Failed != 1 {
+		t.Fatalf("Failed = %d, want 1", result.Failed)
+	}
+	if len(result.Items) != 2 {
+		t.Fatalf("len(Items) = %d, want 2", len(result.Items))
+	}
+	if len(result.Errors) != 1 {
+		t.Fatalf("len(Errors) = %d, want 1", len(result.Errors))
+	}
+	// len(Errors) > 0 是为了避免空 slice 索引导致另一个错
+	if len(result.Errors) > 0 && result.Errors[0].Index != 1 {
+		t.Fatalf("Errors[0].Index = %d, want 1", result.Errors[0].Index)
+	}
+}
+
 func TestStoreUpdateMissingNoteReturnsErrNoRows(t *testing.T) {
 	databasePath := filepath.Join(t.TempDir(), "dev-notes.db")
 	database, err := Open(databasePath)

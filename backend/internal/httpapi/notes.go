@@ -125,6 +125,44 @@ func (handler notesHandler) update(response http.ResponseWriter, request *http.R
 
 	writeJSON(response, http.StatusOK, note)
 }
+
+// importBatch 处理 POST /api/notes/import：批量创建笔记
+// 状态码：201 全成功 / 207 部分成功 / 400 全失败 / 500 DB 错
+// （不用 import 这个名字因为是 Go 关键字，handler 方法名避开）
+func (handler notesHandler) importBatch(response http.ResponseWriter, request *http.Request) {
+	//  解析 JSON body 为 []store.ImportNoteInput
+	var input struct {
+		Notes []store.ImportNoteInput `json:"notes"`
+	}
+	decoder := json.NewDecoder(request.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		writeJSON(response, http.StatusBadRequest, map[string]string{"error": "请求体必须是包含 notes 的 JSON"})
+		return
+	}
+	// 调 store
+	result, err := handler.notesStore.ImportNotes(input.Notes)
+	if err != nil {
+		writeJSON(response, http.StatusInternalServerError, map[string]string{"error": "导入笔记失败"})
+		return
+	}
+
+	// 按结果选状态码
+	// 三分支：全成功 / 全失败 / 部分成功
+	// 用 switch + case 比 if/else if 链更清晰地表达"互斥三态"
+	status := http.StatusMultiStatus
+	switch {
+	case result.Failed == 0:
+		status = http.StatusCreated // 201
+	case result.Imported == 0:
+		status = http.StatusBadRequest // 400
+	default:
+		status = http.StatusMultiStatus // 207
+	}
+	writeJSON(response, status, result)
+
+}
+
 func writeJSON(response http.ResponseWriter, status int, body any) {
 	response.Header().Set("Content-Type", "application/json")
 	response.WriteHeader(status)

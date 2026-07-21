@@ -11,6 +11,7 @@ type NotesStore interface {
 	ListNotes() ([]store.Note, error)
 	DeleteNote(int64) error
 	UpdateNote(int64, store.UpdateNoteInput) (store.Note, error)
+	ImportNotes([]store.ImportNoteInput) (store.ImportResult, error)
 }
 
 func NewHandler(notesStore NotesStore) http.Handler {
@@ -23,6 +24,7 @@ func NewHandler(notesStore NotesStore) http.Handler {
 	//新增一个删除路由
 	router.HandleFunc("DELETE /api/notes/{id}", notes.delete)
 	router.HandleFunc("PUT /api/notes/{id}", notes.update)
+	router.HandleFunc("POST /api/notes/import", notes.importBatch)
 
 	return router
 }
