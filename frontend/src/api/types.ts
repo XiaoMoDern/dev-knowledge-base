@@ -18,9 +18,12 @@ export interface NoteInput {
   categoryId?: number | null
 }
 
-// GET /api/notes 列表响应
-export interface NotesList {
+// GET /api/notes 列表响应（4 维过滤 + 分页：q / categoryId / page / pageSize）
+export interface PaginatedNotes {
   items: Note[]
+  total: number
+  page: number
+  pageSize: number
 }
 
 // POST /api/notes/import 入参的单条 note；后端会校验 title 非空

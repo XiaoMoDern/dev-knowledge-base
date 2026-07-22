@@ -1,21 +1,41 @@
 import { apiGet, apiPost, apiPut, apiDelete } from './client'
-import type { Note, NoteInput, NotesList, ImportNoteInput, ImportResult } from './types'
+import type { Note, NoteInput, PaginatedNotes, ImportNoteInput, ImportResult } from './types'
 
 // GET /api/health —— 仅用于验证前后端打通
 export function getHealth(): Promise<{ status: string }> {
   return apiGet<{ status: string }>('/api/health')
 }
 
-// GET /api/notes —— 列表（全部分类）
-export function listNotes(): Promise<NotesList> {
-  return apiGet<NotesList>('/api/notes')
+// searchNotesParams 是 GET /api/notes 的 4 维 query 参数
+export interface searchNotesParams {
+  q?: string           // 搜索关键字（title OR content），空 = 不过滤
+  categoryId?: number  // 分类过滤，undefined = 不过滤
+  page?: number        // 页码，默认 1
+  pageSize?: number    // 每页条数，默认 20
 }
 
-// GET /api/notes?categoryId=N —— 按分类过滤
-// 后端约定：categoryId 必须是正整数（>0），0 / 不传 = 全部
-// "未分类" 单独走 listNotes() + 前端本地过滤（后端没暴露"未分类"语义）
-export function listNotesByCategory(categoryId: number): Promise<NotesList> {
-  return apiGet<NotesList>(`/api/notes?categoryId=${categoryId}`)
+// GET /api/notes —— 4 维过滤 + 分页统一接口
+// 后端 handler 解析 4 维 query，调 store.SearchNotes
+export function searchNotes(params: searchNotesParams = {}): Promise<PaginatedNotes> {
+  const search = new URLSearchParams()
+  if (params.q) search.set('q', params.q)
+  if (params.categoryId !== undefined) search.set('categoryId', String(params.categoryId))
+  if (params.page) search.set('page', String(params.page))
+  if (params.pageSize) search.set('pageSize', String(params.pageSize))
+  const query = search.toString()
+  return apiGet<PaginatedNotes>(`/api/notes${query ? '?' + query : ''}`)
+}
+
+// 兼容旧调用：按分类过滤（NoteDetailView / 老代码可能用）
+// 内部转发到 searchNotes({ categoryId })
+export function listNotesByCategory(categoryId: number): Promise<PaginatedNotes> {
+  return searchNotes({ categoryId })
+}
+
+// 兼容旧调用：拉全部分类笔记（NoteEditView 编辑模式复用、NoteDetailView 找引用等）
+// 内部转发到 searchNotes() 无参（page=1 pageSize=20）
+export function listNotes(): Promise<PaginatedNotes> {
+  return searchNotes()
 }
 
 // POST /api/notes —— 创建
