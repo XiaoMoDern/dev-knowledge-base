@@ -141,3 +141,52 @@
 - 组件可以用 `e instanceof ApiError` + `e.status` 做精细处理，比如 404 走"未找到"分支。
 - 后端时间字段是 RFC3339 字符串（如 `2026-07-20T11:30:00Z`），前端用 `new Date(s).toLocaleString()` 转本地化显示，零依赖。
 
+## 2026-07-21：time.Format 精度与字符串相等陷阱
+- `time.RFC3339` 精度到秒；`time.RFC3339Nano` 精度到纳秒。`updated_at` 必须用 Nano，否则同秒内"创建+更新"产生的字符串相等，导致断言 fail。
+- Go 时间字段存为 string 后的比较：ISO 8601 字典序 = 时间序，所以 Nano 改精度对前端排序无副作用。
+- 教训：写测试别只看"形似"——要看"同秒内产生差异"这种 boundary case。TDD 跑全量是抓 silent fail 的唯一保险。
+
+## 2026-07-21：nullable 设计的"双指针"原则
+- `int64` 默认值是 0，不能表达"没分类"——DB NULL 映射不到 int64。
+- 解决：用 `*int64`（指针）—— nil 表示"没值"，`*p` 拿真实 id。
+- 不仅是函数入参，连结构体字段都要 `*int64`：`type Note struct { CategoryID *int64 }`——这是跨边界 1:1 的硬约束。
+- 前端对应：`categoryId?: number | null`（TypeScript 同样要可空）。
+- 教学点：**所有"语义上可能没有"的字段都要用指针**，不仅是参数——是"数据契约"层面的强制。
+
+## 2026-07-21：SQL 列数 vs 参数数必须 1:1
+- SQL `INSERT INTO notes (workspace_id, category_id, title, content, visibility, created_at, updated_at) VALUES (?, ?, ?, ?, 'private', ?, ?)` 看起来 7 列 5 个 `?`——但**字面量 'private' 不占占位符**，所以 7 列 5 占位符是匹配的。
+- 如果列加了一个但占位符没加，SQL 仍能成功（? 数少于列数 = 末尾列用 NULL），但**所有受影响行的"末尾字段"都会变成 NULL**——silent fail。
+- 教训：改 SQL 时**列数 vs `?` 数要 1:1 对账**；字面量不计 `?` 但要计入列数。
+- 检查方法：肉眼数 `(` 内的列 vs `?` 字符——必须满足 `列数 = ? 数 + 字面量数`。
+
+## 2026-07-21：if 块 shadow 陷阱
+- `if result, err := ...; err != nil { ... }` 在 if 块里用 `:=` 声明——但**外层已经声明过 result/err**，所以 if 块里的 `result` 是新的局部变量，外层 `result` 永远是零值。
+- 如果后面 `result.RowsAffected()` 用的是外层 result，会 panic "nil pointer dereference"。
+- 修法：要么外层先 `var result sql.Result` + if 块里 `result, err = ...`（用 `=` 不用 `:=`），要么 if 块里 return 出去。
+- 教训：**`:=` 的"至少一个新变量"规则**——块内全部是已声明变量时必须用 `=`。这是 Go 特有，前端 JS 没有 block scope shadow。
+
+## 2026-07-21：if Valid 模式（sql.NullX 转 *T）
+- `sql.NullInt64` / `sql.NullString` 是 database/sql 提供的"nullable 中转类型"，有 `Valid bool` + `Int64 int64` 两个字段。
+- Scan 只能进 NullX 类型，不能直接进 `*int64`——所以 INSERT/UPDATE/SELECT 时都要先 Scan 到 NullX，再 `if Valid` 转成 `*int64`。
+- 关键：NullX 的 `Int64` 字段**永远有值**（默认 0），但 `Valid:false` 表示"DB 是 NULL"——`omitempty` 不会触发，因为指针非 nil。
+- 修法（CreateNote return Note{}）：
+  ```go
+  note := Note{ ID: noteID, ... }
+  if categoryIDArg.Valid {
+      note.CategoryID = &categoryIDArg.Int64
+  }
+  return note, nil
+  ```
+- 前端类比：`x.Valid` ≈ `x != null`，但顺序反着——Go 是"如果有效就用值"，前端是"如果 null 就用兜底"。
+- 详细笔记见 `docs/knowledge/go/010-if-valid-pattern.md`。
+
+## 2026-07-21：TDD 跑全量 = 抓 silent fail 唯一保险
+- Phase B 暴露的 bug 链：单个看都"像对"、连起来就 silent fail：
+  1. `UpdateNote` 的 `if x, y := ...` shadow 外层 result → panic "nil pointer dereference"
+  2. `CreateNoteInput.CategoryID int64` 应该是 `*int64` → DB NULL 变 0
+  3. `CreateNote.return Note{}` 漏 CategoryID 字段 → 响应不带 categoryId，前端永远拿不到
+- 这 3 个 bug 任意一个都不会被"只跑单测"抓到——必须跑全量 + E2E curl 验"有/无/null" 3 个场景。
+- 易错点（教学价值，本次未踩但要记住）：`INSERT INTO ... VALUES (?, ?, 'private', ?)` 加列时要**同步加 `?` + 算字面量**——列数 = `?` 数 + 字面量数，否则 DB 写 NULL 但 SQL 不报错。
+- 教训：**TDD 跑全量（`go test ./...`）是教学纪律的核心**——比"看代码像对"靠谱，比"看 commit diff"靠谱，比"口头确认"靠谱 100 倍。
+
+

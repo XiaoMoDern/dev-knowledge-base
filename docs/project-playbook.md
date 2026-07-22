@@ -246,3 +246,104 @@ git push origin <branch-name>
 ```
 
 提交和推送会改变外部 Git 状态，必须先由用户明确授权。每次命令都要知道“命令做什么、预期输出是什么、失败后如何定位”，不能只复制粘贴。
+
+## Step 3.6：NoteEditView 风格统一 + 编辑/详情分页
+- 日期：2026-07-20
+- 目标：让 NoteEditView 跟 NoteListView/NoteDetailView 风格统一（都用 Element Plus 组件），加"编辑"按钮路由 `/notes/:id/edit`。
+- 执行内容：
+  - 重写 `NoteListView.vue`：注释精简到 1 行；标题跳 `/notes/:id`（详情）；加 `<el-button>编辑</el-button>` 在删除按钮前。
+  - 新建 `NoteDetailView.vue`：只读展示 + 编辑/删除/返回三个按钮 + 找不到笔记走 `el-empty`。
+  - 改 `router.ts`：`/notes/:id` 走 `NoteDetailView`；`/notes/:id/edit` 走 `NoteEditView`。
+  - 改 `NoteEditView.vue`：`<el-form>` / `<el-form-item>` / `<el-input>` / `<el-button>` 替换原生 input/textarea；`<el-alert>` / `<el-empty>` 跟另外两个 View 对齐；`ElMessage` 提示保存成功/失败；`native-type="submit"` 让 Enter 键也能提交。
+- 验证：浏览器走 5 个流程（新增/删除/编辑/不存在 id/详情）都通过；NoteEditView 视觉/交互跟 NoteListView/NoteDetailView 一致。
+- 设计依据：Ray 风格约定"项目风格统一，不一半用原生一半用组件"——CRUD UI 风格一致是基本盘。
+- 学习点：
+  - "测试通过"只能证明功能正确，不等于满足自己的风格约定——review 时要按自己的标准对照检查。
+  - 路由设计：详情页和编辑页是两个 URL，不是同一个 URL 加 mode 切换——URL 是状态的天然 bookmark。
+  - Element Plus d.ts：`components.d.ts` / `auto-imports.d.ts` 由 unplugin 自动生成，**`npm run dev` 第一次跑才会生成**——`vue-tsc --noEmit` 才会通过；新加的 el-form-item 类型不在时先跑 dev 一次。
+
+## Step 4：批量导入 .md（Phase A）
+- 日期：2026-07-20
+- 目标：让用户能选多个 .md 文件一次性导入为笔记（保留 Markdown 正文，自动用文件名作 title）。
+- 执行内容：
+  - **后端**：
+    - `store/note.go` 加 `ImportNoteInput` / `ImportError` / `ImportResult` 类型（**3 个类型必须加 json tag**，否则 Phase A 教训重演——前端拿全 undefined silent fail）。
+    - `Store.ImportNotes(notes)`：业务校验 title 非空 + 一个事务批量插入 + 三状态码（201/207/400）。
+    - `httpapi/notes.go` 加 `importBatch` 方法：`POST /api/notes/import`，body 是 `{ "notes": [...] }`。
+  - **前端**：
+    - `types.ts` 加 `ImportNoteInput` / `ImportError` / `ImportResult`。
+    - `notes.ts` 加 `importNotes(inputs)` API 函数。
+    - `utils/markdown.ts` 加极简 front matter 解析（不引 js-yaml 库——少依赖 = 好学）。
+    - `components/ImportDialog.vue` 新建：`<el-upload>` + `<el-dialog>` + `<el-table>` 统一风格。
+    - `views/NoteListView.vue` 顶部加 `<el-button>导入 .md</el-button>`。
+- 验证：`vue-tsc --noEmit` 0 错；`go test ./...` 全绿（含 2 个新测试 `TestStoreImportsNotes` + `TestStoreImportSkipsInvalidNotes`）；浏览器走"选 3 个 .md → 批量导入"流程，列表立即显示 3 条。
+- 设计依据：`docs/superpowers/specs/2026-07-20-markdown-import-design.md`。
+- 学习点（**Phase A 核心教训**）：
+  - **跨边界类型必须有 json tag**——Go encoding/json 默认 PascalCase 字段名，前端 types 是 camelCase，没 tag = silent fail。
+  - **TS 严格类型不验证运行时 JSON 字段名**——前端拿到全 undefined 不会编译报错，是运行时崩。
+  - **defer tx.Rollback() 是 no-op** 模式：commit 成功后 rollback 不报错，事务里写 defer 在前面最稳。
+  - **错误聚合 vs 立即返回**：批量接口不要第一个错就返回——收集所有 Errors 一起给前端，前端能展示完整失败明细。
+  - **HTTP 207 Multi-Status** 是"部分成功"标准状态码（来自 WebDAV），不要用 200 凑合。
+
+## Step 5：详情页 Markdown 渲染（Phase A+）
+- 日期：2026-07-20
+- 目标：详情页 raw markdown 太丑（`#` `##` ``` 都显示成字符），改成 GitHub README 风格的渲染输出。
+- 执行内容：
+  - `frontend/src/utils/markdown.ts` 加 `marked.use({...})` 配置 + `renderMarkdown(text)` 函数（GFM + GitHub 风格）。
+  - `NoteDetailView.vue` 改 `<div v-html="renderMarkdown(note.content)">` + 加 GitHub README 风格 `<style>`。
+  - 引入 `marked` v18 + `dompurify`（**不**用——单机信任源，省一个依赖）。
+- 验证：详情页有 `# 标题` / `## 副标题` / ```` ```go ```` 代码块 / 表格 / 链接 / 引用 / 列表 都正确渲染；样式跟 GitHub README 一致。
+- 学习点（**Phase A+ 核心教训**）：
+  - **`<style scoped>` 不会作用 v-html 注入的 DOM**——v-html 注入的 DOM 不带 scope attribute，要么非 scoped，要么 `:deep()`。
+  - **marked v18 API**：`marked.parse(text, { async: false })` 强制同步；module-level `marked.use({...})` 配置。
+  - **DOMPurify 可选**——单机信任源（自己写自己读）可以不加 XSS 过滤；多用户/外部输入必须加。
+  - **XSS 风险**：v-html 注入的 DOM 信任源风险——只有"自己输入自己读"才安全；公共输入必须 DOMPurify。
+
+## Step 6：分类落地（Phase B）
+- 日期：2026-07-21
+- 目标：把 `data-model.md` 早就定义但一直未落地的 `categories` 表启用，让笔记可以按分类组织、列表可按分类筛选。
+- 执行内容（**后端 store**）：
+  - 新建 `store/category.go`：`Category` 类型（带 json tag）+ `CreateCategory(name)` + `ListCategories()`。
+  - 改 `store/note.go`：
+    - `Note` 类型加 `CategoryName *string` 字段。
+    - `CreateNoteInput` / `UpdateNoteInput` 加 `CategoryID *int64` 字段（**必须 `*int64` 不是 `int64`**——nullable 双指针原则）。
+    - `CreateNote` / `UpdateNote` SQL 加 `category_id` 列（用 `sql.NullInt64` 中转）。
+    - `ListNotes` / `UpdateNote` SQL 加 `LEFT JOIN categories c ON n.category_id = c.id` + 多 `SELECT c.name AS category_name`。
+    - `ListNotes` / `UpdateNote` Scan 加 `&note.CategoryName` + `var categoryName sql.NullString` + `if categoryName.Valid { ... }`。
+    - 新增 `ListNotesByCategory(categoryID)`：WHERE `n.category_id = ?` 过滤。
+- 执行内容（**后端 httpapi**）：
+  - 新建 `httpapi/category.go`：`categoryHandler` + `create` + `list`（**跟 notesHandler 模板同构**——照葫芦画瓢）。
+  - 改 `httpapi/health.go`：
+    - 加 `CategoryStore` 接口（**接口分离**原则——跟 NotesStore 独立）。
+    - `NewHandler(notesStore, categoryStore)` 改签名（**改签名 = 改所有调用方**，Go 编译会抓 10+ 处）。
+  - 改 `httpapi/notes.go`：
+    - `create` / `update` 的 JSON struct 加 `CategoryID *int64 \`json:"categoryId"\``。
+    - `list` 加 `?categoryId=N` query 参数解析（用 `request.URL.Query().Get` 不是 `PathValue`）。
+  - 改 `cmd/server/main.go`：`newServer(notesStore, categoryStore)` 传 2 个 store。
+- 执行内容（**前端**）：
+  - `api/types.ts` 加 `Category` / `CategoriesList` / `CreateCategoryInput`，`NoteInput` 加 `categoryId?: number | null`，`Note` 加 `categoryName?: string`。
+  - `api/categories.ts` 新建：`listCategories()` / `createCategory()`。
+  - `views/NoteEditView.vue`：加 `<el-select v-model="categoryId">` 分类下拉 + `+ 新建` 按钮（弹窗输入名字 + 立即可用）。
+  - `views/NoteDetailView.vue`：标题下加一行 `<p v-if="note.categoryName">分类：{{ note.categoryName }}</p>`。
+  - 改错误提示：所有 `catch` 加 `ElMessage.error(msg)` 弹窗（不只是页面顶部 el-alert）。
+- 验证：`go test ./... -v` 27 个全 PASS（13 store + 12 httpapi + 1 server + 1 ...）；`vue-tsc --noEmit` 0 错；浏览器走"创建分类 → 创建带分类的 note → 详情页看分类"全流程。
+- 设计依据：`docs/superpowers/specs/2026-07-21-categories-design.md`。
+- 学习点（**Phase B 核心教训**）：
+  - **外键约束 + ON DELETE SET NULL**：`notes.category_id REFERENCES categories(id) ON DELETE SET NULL`——删 category 自动让相关 note 变"无分类"，handler 不需要先解绑。
+  - **SQL 别名 + LEFT JOIN 语义**：`FROM notes n LEFT JOIN categories c ON n.category_id = c.id`——`n` / `c` 别名避免歧义；LEFT JOIN 让"没分类的 note"也保留（INNER JOIN 会过滤掉）。
+  - **`sql.NullX` 中转模式**：Go database/sql **不能**直接 Scan 到 `*string`，必须 `sql.NullString` 中转再 `if Valid` 判断。
+  - **Scan 顺序敏感性**：SQL 加列 Scan 必须同步加变量（`Scan` 按列出现顺序赋值，不是列名）。
+  - **改签名 = 改所有调用方**：Go 编译会一次性暴露所有 `NewHandler(x)` 缺参数（10+ 处）——包括测试文件。
+  - **mock 模式隔离**：`fakeNotesStore` 不关心的接口参数可以传 `nil`（不测哪个接口传哪个 nil）。
+  - **query vs path 参数**：`PathValue` vs `URL.Query().Get`——前端类比：path = `/users/:id`（路由级），query = `?page=1`（参数级）。
+
+## Step 6.5：time.Format 精度修复（跨 Step fix）
+- 日期：2026-07-21
+- 目标：修复 phase A 一直潜伏、`go test ./...` 全跑时才暴露的 `TestStoreUpdatesNote` 失败。
+- 根因：`time.Now().UTC().Format(time.RFC3339)` 默认精度到秒；创建和更新在同一秒内产生的字符串相等，`updated_at should change` 断言失败。
+- 修复：3 处（`CreateNote` / `UpdateNote` / `ImportNotes`）改 `Format(time.RFC3339Nano)` 精度到纳秒。
+- 验证：12 个测试全 PASS（含 `TestStoreUpdatesNote`）。
+- 学习点：
+  - **`time.Format(layout)` 的 layout 决定精度**——`RFC3339` 不带小数（秒）、`RFC3339Nano` 带 9 位小数（纳秒）。
+  - **ISO 8601 字符串字典序 = 时间序**——前端按 `updatedAt` 排序逻辑完全不受精度影响。
+  - **TDD 跑全量（`go test ./...`）是抓 silent fail 的唯一保险**——之前测试碰巧都在 1s 间隔跑没暴露；这次同秒才暴露。

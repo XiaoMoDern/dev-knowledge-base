@@ -48,3 +48,38 @@
 `docs/knowledge/` 作为知识条目的 Markdown 源目录，与项目过程文档分离。每条知识内容使用 YAML front matter 保存 `id`、标题、分类、标签和摘要，正文使用 Markdown。
 
 原因：当前可直接在 Git 中审阅和积累笔记；后续可由 Go 程序解析这些文件，导入 SQLite，避免手工重复录入已有学习内容。
+
+## 2026-07-21：引入 Element Plus 组件库
+
+推翻 2026-07-20 design.md 中"不引组件库，自己写 CSS"的决策，改用 Element Plus 2.14 + 按需自动引入（unplugin-auto-import + unplugin-vue-components）。
+
+原因：
+- CRUD UI 需要 `<el-form>` / `<el-dialog>` / `<el-select>` / `<el-tag>` / `<el-empty>` / `ElMessage` / `ElMessageBox`——纯手写要 200+ 行 CSS
+- 按需自动引入只把用到的组件打进 bundle，体积可控（不是全量 1MB+）
+- TypeScript 类型自动生成（`components.d.ts` / `auto-imports.d.ts`），不用手写 .d.ts
+
+代价：第一次 `npm run dev` 才会生成 d.ts；新加组件前要先 dev 一次。
+
+## 2026-07-21：分类管理用"内嵌弹窗"而非独立页
+
+`NoteEditView` 里加 `+ 新建` 按钮 → 弹出 `el-dialog` 输入分类名 → 创建后自动选中。
+
+不做的方案：单独的 `/categories` 管理页（像 GitHub 标签管理）。
+
+原因：
+- 90% 场景是"编辑 note 时发现没分类，要立即建一个"——独立页要跳走再回来，破坏编辑流
+- 分类是"二级概念"——主流程是 note，分类是为 note 服务的
+- Typora / Bear 等笔记软件都采用这种"边用边建"模式
+
+trade-off：批量管理分类不方便（重命名/删除没做）—— 后期若需要可加独立页。
+
+## 2026-07-21：列表分页暂缓到 Phase C
+
+当前所有笔记一次性返回（`GET /api/notes` 无分页参数），不实现 LIMIT/OFFSET。
+
+原因：
+- 个人知识库数据量小（当前 < 30 条），分页不是瓶颈
+- Phase C 计划做搜索 + 分页一起——分页参数 + 搜索关键字 + 分类筛选一起设计更一致
+- 提前做分页会引入"页码状态"、"总数响应"等噪音，影响 Phase B 教学
+
+实现标记：Phase C 启动时再讨论具体分页方式（offset vs cursor）。
