@@ -13,6 +13,7 @@ type NotesStore interface {
 	DeleteNote(int64) error
 	UpdateNote(int64, store.UpdateNoteInput) (store.Note, error)
 	ImportNotes([]store.ImportNoteInput) (store.ImportResult, error)
+	SearchNotes(store.SearchOptions) (store.PaginatedNotes, error)
 }
 
 type CategoryStore interface {

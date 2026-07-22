@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -379,5 +380,162 @@ func TestStoreListsNotesByCategory(t *testing.T) {
 	// 复用 JOIN：CategoryName 应该 = "Go"
 	if notes[0].CategoryName == nil || *notes[0].CategoryName != "Go" {
 		t.Fatalf("first note CategoryName = %v, want %q", notes[0].CategoryName, "Go")
+	}
+}
+
+// TestStoreSearchNotesByKeyword 验证搜索关键字过滤：title 或 content 含关键字的 note 都返回。
+// 当前 SearchNotes 还没实现 —— Red。
+func TestStoreSearchNotesByKeyword(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "dev-notes.db")
+	database, err := Open(databasePath)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("close database: %v", err)
+		}
+	})
+
+	workspaceID, err := database.defaultWorkspaceID()
+	if err != nil {
+		t.Fatalf("find workspace: %v", err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+
+	// 3 个 note：title 含 Go / Python / Vue
+	testNotes := []struct {
+		title   string
+		content string
+	}{
+		{"Go 入门", "学习 Go 基础语法"},
+		{"Python 入门", "学习 Python 基础"},
+		{"Vue 入门", "前端框架学习"},
+	}
+	for _, n := range testNotes {
+		_, err = database.db.Exec(`
+			INSERT INTO notes (workspace_id, title, content, visibility, created_at, updated_at)
+			VALUES (?, ?, ?, 'private', ?, ?)
+		`, workspaceID, n.title, n.content, now, now)
+		if err != nil {
+			t.Fatalf("insert note %q: %v", n.title, err)
+		}
+	}
+
+	// 搜 "Go" → 只返 "Go 入门"
+	result, err := database.SearchNotes(SearchOptions{Query: "Go", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("search notes: %v", err)
+	}
+	if len(result.Items) != 1 {
+		t.Fatalf("result count = %d, want 1", len(result.Items))
+	}
+	if result.Items[0].Title != "Go 入门" {
+		t.Fatalf("first result title = %q, want %q", result.Items[0].Title, "Go 入门")
+	}
+	if result.Total != 1 {
+		t.Fatalf("total = %d, want 1", result.Total)
+	}
+}
+
+// TestStoreListsNotesWithPagination 验证分页：建 25 个 note，page=2 pageSize=10 返第 11-20 条。
+// ORDER BY updated_at DESC：note-25 在前，note-1 在后。
+// 当前 SearchNotes 还没实现 —— Red。
+func TestStoreListsNotesWithPagination(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "dev-notes.db")
+	database, err := Open(databasePath)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("close database: %v", err)
+		}
+	})
+
+	workspaceID, err := database.defaultWorkspaceID()
+	if err != nil {
+		t.Fatalf("find workspace: %v", err)
+	}
+
+	// 插 25 个 note：每条 updated_at 差 1 秒，保证 ORDER BY 顺序确定
+	base := time.Now().UTC()
+	for i := 1; i <= 25; i++ {
+		updatedAt := base.Add(time.Duration(i) * time.Second).Format(time.RFC3339Nano)
+		_, err = database.db.Exec(`
+			INSERT INTO notes (workspace_id, title, content, visibility, created_at, updated_at)
+			VALUES (?, ?, '', 'private', ?, ?)
+		`, workspaceID, fmt.Sprintf("note-%d", i), updatedAt, updatedAt)
+		if err != nil {
+			t.Fatalf("insert note-%d: %v", i, err)
+		}
+	}
+
+	// page=2 pageSize=10 → 第 11-20 条
+	// page 1: note-25..note-16 / page 2: note-15..note-6 / page 3: note-5..note-1
+	result, err := database.SearchNotes(SearchOptions{Page: 2, PageSize: 10})
+	if err != nil {
+		t.Fatalf("search notes: %v", err)
+	}
+	if len(result.Items) != 10 {
+		t.Fatalf("page 2 count = %d, want 10", len(result.Items))
+	}
+	if result.Total != 25 {
+		t.Fatalf("total = %d, want 25", result.Total)
+	}
+	if result.Items[0].Title != "note-15" {
+		t.Fatalf("page 2 first title = %q, want %q", result.Items[0].Title, "note-15")
+	}
+	if result.Items[9].Title != "note-6" {
+		t.Fatalf("page 2 last title = %q, want %q", result.Items[9].Title, "note-6")
+	}
+}
+
+// TestStoreSearchAndPaginate 验证搜索 + 分页组合：建 30 个 note（10 Go + 20 Python），
+// 搜 "Go" page=1 pageSize=5 → 5 条 total=10。
+// 当前 SearchNotes 还没实现 —— Red。
+func TestStoreSearchAndPaginate(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "dev-notes.db")
+	database, err := Open(databasePath)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("close database: %v", err)
+		}
+	})
+
+	workspaceID, err := database.defaultWorkspaceID()
+	if err != nil {
+		t.Fatalf("find workspace: %v", err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+
+	// 10 个 Go + 20 个 Python
+	for i := 1; i <= 30; i++ {
+		title := fmt.Sprintf("Python 笔记 %d", i)
+		if i <= 10 {
+			title = fmt.Sprintf("Go 笔记 %d", i)
+		}
+		_, err = database.db.Exec(`
+			INSERT INTO notes (workspace_id, title, content, visibility, created_at, updated_at)
+			VALUES (?, ?, '', 'private', ?, ?)
+		`, workspaceID, title, now, now)
+		if err != nil {
+			t.Fatalf("insert note %d: %v", i, err)
+		}
+	}
+
+	// 搜 "Go" page=1 pageSize=5 → 5 条 total=10
+	result, err := database.SearchNotes(SearchOptions{Query: "Go", Page: 1, PageSize: 5})
+	if err != nil {
+		t.Fatalf("search notes: %v", err)
+	}
+	if len(result.Items) != 5 {
+		t.Fatalf("result count = %d, want 5", len(result.Items))
+	}
+	if result.Total != 10 {
+		t.Fatalf("total = %d, want 10", result.Total)
 	}
 }

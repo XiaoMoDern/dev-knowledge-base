@@ -68,6 +68,7 @@ func (store *Store) CreateNote(input CreateNoteInput) (Note, error) {
 	if input.CategoryID != nil {
 		categoryIDArg = sql.NullInt64{Int64: *input.CategoryID, Valid: true}
 	}
+
 	//执行sql插入
 	result, err := store.db.Exec(`
 		INSERT INTO notes (workspace_id, category_id, title, content, visibility, created_at, updated_at)
@@ -82,17 +83,33 @@ func (store *Store) CreateNote(input CreateNoteInput) (Note, error) {
 		return Note{}, fmt.Errorf("read created note ID: %w", err)
 	}
 
-	note := Note{
-		ID:           noteID,
-		CategoryName: nil,
-		Title:        input.Title,
-		Content:      input.Content,
-		Visibility:   "private",
-		CreatedAt:    now,
-		UpdatedAt:    now,
+	var note Note
+	var categoryID sql.NullInt64
+	var categoryName sql.NullString
+
+	err = store.db.QueryRow(`
+    SELECT n.id, n.category_id, c.name AS category_name, n.title, n.content, n.visibility, n.created_at, n.updated_at
+    FROM notes n
+    LEFT JOIN categories c ON n.category_id = c.id
+    WHERE n.id = ? AND n.workspace_id = ?
+	`, noteID, workspaceID).Scan(
+		&note.ID,
+		&categoryID,
+		&categoryName,
+		&note.Title,
+		&note.Content,
+		&note.Visibility,
+		&note.CreatedAt,
+		&note.UpdatedAt,
+	)
+	if err != nil {
+		return Note{}, fmt.Errorf("read created note: %w", err)
 	}
-	if categoryIDArg.Valid {
-		note.CategoryID = &categoryIDArg.Int64
+	if categoryID.Valid {
+		note.CategoryID = &categoryID.Int64
+	}
+	if categoryName.Valid {
+		note.CategoryName = &categoryName.String
 	}
 
 	return note, nil
@@ -423,4 +440,125 @@ func (store *Store) defaultWorkspaceID() (int64, error) {
 	}
 
 	return workspaceID, nil
+}
+
+// SearchOptions 是 SearchNotes 的输入参数：4 维过滤
+type SearchOptions struct {
+	Query      string // 搜索关键字（title OR content），空 = 不过滤
+	CategoryID *int64 // 分类 ID，nil = 不过滤
+	Page       int    // 页码（从 1 开始），1 = 第一页
+	PageSize   int    // 每页条数
+}
+
+// PaginatedNotes 是 SearchNotes 的返回结果：分页 items + total + page/pageSize 元数据
+type PaginatedNotes struct {
+	Items    []Note `json:"items"`
+	Total    int    `json:"total"`
+	Page     int    `json:"page"`
+	PageSize int    `json:"pageSize"`
+}
+
+// SearchNotes 按 SearchOptions 多维过滤 + 分页查询 notes
+// 当前还没实现 —— Red
+func (store *Store) SearchNotes(opts SearchOptions) (PaginatedNotes, error) {
+	workspaceID, err := store.defaultWorkspaceID()
+	if err != nil {
+		return PaginatedNotes{}, err
+	}
+
+	whereClause := []string{"n.workspace_id = ?"}
+	args := []any{workspaceID}
+
+	if opts.Query != "" {
+		// %keyword% 包含匹配：注意用 fmt.Sprintf 拼 %，不要拼到 SQL 字符串
+		whereClause = append(whereClause, fmt.Sprintf("n.title LIKE ? OR n.content LIKE ?"))
+		pattern := "%" + opts.Query + "%"
+		args = append(args, pattern, pattern)
+	}
+
+	if opts.CategoryID != nil {
+		whereClause = append(whereClause, "n.category_id = ?")
+		args = append(args, *opts.CategoryID)
+	}
+
+	whereSQL := strings.Join(whereClause, " AND ")
+
+	// 第二步：count 查询（不带 JOIN，只算 notes 数量）
+	var total int
+	countSQL := "SELECT COUNT(*) FROM notes n WHERE " + whereSQL
+	if err := store.db.QueryRow(countSQL, args...).Scan(&total); err != nil {
+		return PaginatedNotes{}, fmt.Errorf("count notes: %w", err)
+	}
+
+	// 第三步：page/pageSize 边界处理
+	page := opts.Page
+	if page < 1 {
+		page = 1
+	}
+	pageSize := opts.PageSize
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	offset := (page - 1) * pageSize
+
+	// 第四步：list 查询（带 JOIN 拿 CategoryName + LIMIT OFFSET）
+	listSQL := `
+		SELECT n.id, n.category_id, c.name AS category_name, n.title, n.content, n.visibility, n.created_at, n.updated_at
+		FROM notes n
+		LEFT JOIN categories c ON n.category_id = c.id
+		WHERE ` + whereSQL + `
+		ORDER BY n.updated_at DESC, n.id DESC
+		LIMIT ? OFFSET ?
+	`
+	listArgs := append(args, pageSize, offset)
+
+	rows, err := store.db.Query(listSQL, listArgs...)
+	if err != nil {
+		return PaginatedNotes{}, fmt.Errorf("list notes: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]Note, 0)
+	for rows.Next() {
+		var note Note
+		var categoryID sql.NullInt64
+		var categoryName sql.NullString
+
+		if err := rows.Scan(
+			&note.ID,
+			&categoryID,
+			&categoryName,
+			&note.Title,
+			&note.Content,
+			&note.Visibility,
+			&note.CreatedAt,
+			&note.UpdatedAt,
+		); err != nil {
+			return PaginatedNotes{}, fmt.Errorf("scan note: %w", err)
+		}
+
+		if categoryID.Valid {
+			note.CategoryID = &categoryID.Int64
+		}
+		if categoryName.Valid {
+			note.CategoryName = &categoryName.String
+		}
+
+		items = append(items, note)
+	}
+
+	if err := rows.Err(); err != nil {
+		return PaginatedNotes{}, fmt.Errorf("iterate notes: %w", err)
+	}
+
+	return PaginatedNotes{
+		Items:    items,
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+	}, nil
+
 }

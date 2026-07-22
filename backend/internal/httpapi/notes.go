@@ -52,6 +52,9 @@ func (handler notesHandler) create(response http.ResponseWriter, request *http.R
 }
 
 func (handler notesHandler) list(response http.ResponseWriter, request *http.Request) {
+	query := request.URL.Query()
+	q := query.Get("q")
+
 	// 解析 ?categoryId=N query 参数
 	var categoryID *int64
 	if raw := request.URL.Query().Get("categoryId"); raw != "" {
@@ -64,15 +67,33 @@ func (handler notesHandler) list(response http.ResponseWriter, request *http.Req
 			categoryID = &parsed
 		}
 	}
-	var (
-		notes []store.Note
-		err   error
-	)
-	if categoryID != nil {
-		notes, err = handler.notesStore.ListNotesByCategory(*categoryID)
-	} else {
-		notes, err = handler.notesStore.ListNotes()
+
+	page := 1
+	if raw := query.Get("page"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 {
+			writeJSON(response, http.StatusBadRequest, map[string]string{"error": "page 必须是非负整数"})
+			return
+		}
+		page = parsed
 	}
+	pageSize := 20
+	if raw := query.Get("pageSize"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 {
+			writeJSON(response, http.StatusBadRequest, map[string]string{"error": "pageSize 必须是非负整数"})
+			return
+		}
+		pageSize = parsed
+	}
+	// 调 SearchNotes
+	result, err := handler.notesStore.SearchNotes(store.SearchOptions{
+		Query:      q,
+		CategoryID: categoryID,
+		Page:       page,
+		PageSize:   pageSize,
+	})
+
 
 	//notes, err := handler.notesStore.ListNotes()
 	if err != nil {
@@ -80,9 +101,7 @@ func (handler notesHandler) list(response http.ResponseWriter, request *http.Req
 		return
 	}
 
-	writeJSON(response, http.StatusOK, struct {
-		Items []store.Note `json:"items"`
-	}{Items: notes})
+	writeJSON(response, http.StatusOK, result)
 }
 
 func (handler notesHandler) delete(response http.ResponseWriter, request *http.Request) {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -64,6 +65,49 @@ func (fake *fakeNotesStore) ListNotesByCategory(categoryID int64) ([]store.Note,
 		}
 	}
 	return filtered, nil
+}
+
+// SearchNotes 是 fake 实现：跟真 store 行为一致——按 q / categoryId 过滤 + 分页。
+// fake 不维护 CategoryName（不建 categories 表），Items 里 CategoryName 永远是 nil。
+func (f *fakeNotesStore) SearchNotes(opts store.SearchOptions) (store.PaginatedNotes, error) {
+	var filtered []store.Note
+	for _, note := range f.notes {
+		if opts.Query != "" {
+			if !strings.Contains(note.Title, opts.Query) && !strings.Contains(note.Content, opts.Query) {
+				continue
+			}
+		}
+		if opts.CategoryID != nil {
+			if note.CategoryID == nil || *note.CategoryID != *opts.CategoryID {
+				continue
+			}
+		}
+		filtered = append(filtered, note)
+	}
+
+	page := opts.Page
+	if page < 1 {
+		page = 1
+	}
+	pageSize := opts.PageSize
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	start := (page - 1) * pageSize
+	if start > len(filtered) {
+		start = len(filtered)
+	}
+	end := start + pageSize
+	if end > len(filtered) {
+		end = len(filtered)
+	}
+
+	return store.PaginatedNotes{
+		Items:    filtered[start:end],
+		Total:    len(filtered),
+		Page:     page,
+		PageSize: pageSize,
+	}, nil
 }
 
 func TestNotesHandlerCreatesAndListsNotes(t *testing.T) {
@@ -294,9 +338,7 @@ func TestNotesHandlerListsByCategory(t *testing.T) {
 		t.Fatalf("list by category status code = %d, want %d", response.Code, http.StatusOK)
 	}
 
-	var body struct {
-		Items []store.Note `json:"items"`
-	}
+	var body store.PaginatedNotes
 	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -320,5 +362,75 @@ func TestNotesHandlerRejectsInvalidCategoryID(t *testing.T) {
 		if response.Code != http.StatusBadRequest {
 			t.Fatalf("categoryId=%q status code = %d, want %d", raw, response.Code, http.StatusBadRequest)
 		}
+	}
+}
+
+// TestNotesHandlerSearchesByKeyword 验证 ?q=xxx 搜索：title 或 content 含关键字的 note 都返回
+func TestNotesHandlerSearchesByKeyword(t *testing.T) {
+	notesStore := &fakeNotesStore{}
+	notesStore.notes = append(notesStore.notes,
+		store.Note{ID: 1, Title: "Go 入门", Content: "学习 Go 基础语法"},
+		store.Note{ID: 2, Title: "Python 入门", Content: "学习 Python 基础"},
+		store.Note{ID: 3, Title: "Vue 入门", Content: "前端框架学习"},
+	)
+	handler := NewHandler(notesStore, nil)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/notes?q=Go", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("search status code = %d, want %d", response.Code, http.StatusOK)
+	}
+
+	var body store.PaginatedNotes
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.Items) != 1 {
+		t.Fatalf("result count = %d, want 1", len(body.Items))
+	}
+	if body.Items[0].Title != "Go 入门" {
+		t.Fatalf("first result title = %q, want %q", body.Items[0].Title, "Go 入门")
+	}
+	if body.Total != 1 {
+		t.Fatalf("total = %d, want 1", body.Total)
+	}
+}
+
+// TestNotesHandlerPaginatesNotes 验证 ?page=&pageSize= 分页：page=2 pageSize=10 返第 11-20 条
+func TestNotesHandlerPaginatesNotes(t *testing.T) {
+	notesStore := &fakeNotesStore{}
+	for i := 1; i <= 25; i++ {
+		notesStore.notes = append(notesStore.notes, store.Note{
+			ID:    int64(i),
+			Title: "note-" + strconv.Itoa(i),
+		})
+	}
+	handler := NewHandler(notesStore, nil)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/notes?page=2&pageSize=10", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("paginate status code = %d, want %d", response.Code, http.StatusOK)
+	}
+
+	var body store.PaginatedNotes
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.Items) != 10 {
+		t.Fatalf("page 2 count = %d, want 10", len(body.Items))
+	}
+	if body.Total != 25 {
+		t.Fatalf("total = %d, want 25", body.Total)
+	}
+	if body.Page != 2 {
+		t.Fatalf("page = %d, want 2", body.Page)
+	}
+	if body.PageSize != 10 {
+		t.Fatalf("pageSize = %d, want 10", body.PageSize)
 	}
 }
