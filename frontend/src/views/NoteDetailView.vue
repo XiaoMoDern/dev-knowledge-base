@@ -61,30 +61,87 @@ onMounted(load)
 </script>
 
 <template>
-  <main v-loading="loading" style="padding: 2rem; max-width: 800px; margin: 0 auto;">
-    <el-alert v-if="error" :title="error" type="error" :closable="false" style="margin-bottom: 1rem;" />
+  <main v-loading="loading" class="detail-view">
+    <el-alert v-if="error" :title="error" type="error" :closable="false" style="margin-bottom: var(--space-lg);" />
 
     <el-empty v-if="!loading && !error && notFound" description="笔记不存在">
       <el-button type="primary" @click="$router.push('/')">返回列表</el-button>
     </el-empty>
 
     <article v-else-if="note">
-      <h1 style="margin: 0;">{{ note.title }}</h1>
-      <p v-if="note.categoryName" style="color: #909399; font-size: 0.875rem; margin: 0.25rem 0 0;">
-        分类：{{ note.categoryName }}
-      </p>
-      <p style="color: gray; font-size: 0.875rem; margin: 0.5rem 0 1.5rem;">
-        最后更新：{{ new Date(note.updatedAt).toLocaleString() }}
-      </p>
-      <div class="markdown-body" v-html="renderedContent"></div>
-      <div style="display: flex; gap: 0.5rem;">
-        <el-button type="primary" @click="$router.push(`/notes/${note.id}/edit`)">编辑</el-button>
-        <el-button type="danger" @click="onDelete">删除</el-button>
-        <el-button @click="$router.push('/')">返回列表</el-button>
+      <div class="action-bar">
+        <div class="action-bar-top">
+          <h1 class="article-title">{{ note.title }}</h1>
+          <div class="action-buttons">
+            <el-button @click="$router.push('/')">返回列表</el-button>
+            <el-button type="danger" plain @click="onDelete">删除</el-button>
+            <el-button type="primary" @click="$router.push(`/notes/${note.id}/edit`)">编辑</el-button>
+          </div>
+        </div>
+        <div class="action-bar-meta">
+          <span v-if="note.categoryName">分类：{{ note.categoryName }}</span>
+          <span>最后更新：{{ new Date(note.updatedAt).toLocaleString() }}</span>
+        </div>
       </div>
+      <div class="markdown-body" v-html="renderedContent"></div>
     </article>
   </main>
 </template>
+
+<style scoped>
+.detail-view {
+  padding: var(--space-xl);
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.action-bar {
+  position: sticky;
+  top: calc(var(--header-height) + var(--space-md0));
+  background: var(--color-bg-elevated);
+  z-index: 5;
+  padding: var(--space-lg) var(--space-xl);
+  margin: calc(-1 * var(--space-xl)) calc(-1 * var(--space-xl)) var(--space-xl);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  border: 1px solid var(--color-border);
+}
+
+.action-bar-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.action-bar-meta {
+  display: flex;
+  gap: var(--space-lg);
+  margin-top: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--color-border);
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+}
+
+.article-title {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--color-text);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.action-buttons {
+  display: flex;
+  gap: var(--space-sm);
+  flex-shrink: 0;
+}
+</style>
 
 <style>
 /* GitHub README 风格的 markdown 样式

@@ -118,9 +118,17 @@ onMounted(() => {
 })
 </script>
 
+<style scoped>
+.edit-view {
+  padding: var(--space-xl);
+  max-width: 800px;
+  margin: 0 auto;
+}
+</style>
+
 <template>
-  <main v-loading="loading" style="padding: 2rem; max-width: 600px; margin: 0 auto;">
-    <el-alert v-if="error" :title="error" type="error" :closable="false" style="margin-bottom: 1rem;" />
+  <main v-loading="loading" class="edit-view">
+    <el-alert v-if="error" :title="error" type="error" :closable="false" style="margin-bottom: var(--space-lg);" />
 
     <el-empty v-if="!loading && !error && notFound" description="笔记不存在">
       <el-button type="primary" @click="$router.push('/')">返回列表</el-button>
