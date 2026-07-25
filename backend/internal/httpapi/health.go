@@ -11,6 +11,7 @@ type NotesStore interface {
 	ListNotes() ([]store.Note, error)
 	ListNotesByCategory(int64) ([]store.Note, error)
 	DeleteNote(int64) error
+	GetNoteByID(noteID int64) (store.Note, error)
 	UpdateNote(int64, store.UpdateNoteInput) (store.Note, error)
 	ImportNotes([]store.ImportNoteInput) (store.ImportResult, error)
 	SearchNotes(store.SearchOptions) (store.PaginatedNotes, error)
@@ -36,6 +37,7 @@ func NewHandler(notesStore NotesStore, categoriesStore CategoryStore) http.Handl
 	categories := categoryHandler{categoriesStore: categoriesStore}
 	router.HandleFunc("GET /api/categories", categories.list)
 	router.HandleFunc("POST /api/categories", categories.create)
+	router.HandleFunc("GET /api/notes/{id}", notes.getNote)
 
 	return router
 }

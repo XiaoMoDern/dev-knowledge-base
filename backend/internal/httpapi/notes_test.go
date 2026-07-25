@@ -44,6 +44,17 @@ func (fake *fakeNotesStore) DeleteNote(noteID int64) error {
 	return sql.ErrNoRows
 }
 
+// GetNoteByID 是 fake 实现：跟真 store 行为一致——按 ID 找，返 note 或 sql.ErrNoRows。
+// 不维护 CategoryName（fake 没建 categories 表），跟 SearchNotes 同款简化策略。
+func (fake *fakeNotesStore) GetNoteByID(noteID int64) (store.Note, error) {
+	for _, note := range fake.notes {
+		if note.ID == noteID {
+			return note, nil
+		}
+	}
+	return store.Note{}, sql.ErrNoRows
+}
+
 func (fake *fakeNotesStore) UpdateNote(noteID int64, input store.UpdateNoteInput) (store.Note, error) {
 	for i, note := range fake.notes {
 		if note.ID == noteID {
@@ -432,5 +443,65 @@ func TestNotesHandlerPaginatesNotes(t *testing.T) {
 	}
 	if body.PageSize != 10 {
 		t.Fatalf("pageSize = %d, want 10", body.PageSize)
+	}
+}
+
+// TestNotesHandlerGetByID：GET /api/notes/{id} 返完整 Note JSON
+// 这是 P1-A 第二页 bug 修复的核心 API：详情页/编辑页用它替换 listNotes() 找 ID。
+func TestNotesHandlerGetByID(t *testing.T) {
+	notesStore := &fakeNotesStore{}
+	notesStore.notes = append(notesStore.notes, store.Note{
+		ID:      7,
+		Title:   "第二页笔记",
+		Content: "这条在原列表第 21 条之后",
+	})
+	handler := NewHandler(notesStore, nil)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/notes/7", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", response.Code, http.StatusOK)
+	}
+
+	var fetched store.Note
+	if err := json.NewDecoder(response.Body).Decode(&fetched); err != nil {
+		t.Fatalf("decode fetched note: %v", err)
+	}
+	if fetched.ID != 7 {
+		t.Fatalf("fetched ID = %d, want 7", fetched.ID)
+	}
+	if fetched.Title != "第二页笔记" {
+		t.Fatalf("fetched title = %q, want %q", fetched.Title, "第二页笔记")
+	}
+}
+
+// TestNotesHandlerGetMissingReturns404：找不到的 ID 必须 404，不能用 500 蒙混过关。
+// 404 是约定的"客户端错了（指错 ID）"语义；500 是"服务端炸了"语义——不能混。
+func TestNotesHandlerGetMissingReturns404(t *testing.T) {
+	handler := NewHandler(&fakeNotesStore{}, nil)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/notes/999", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("status code = %d, want %d", response.Code, http.StatusNotFound)
+	}
+}
+
+// TestNotesHandlerRejectsInvalidGetID：路径参数守门——非正整数 ID 必须 400，跟 delete/update 同款。
+func TestNotesHandlerRejectsInvalidGetID(t *testing.T) {
+	handler := NewHandler(&fakeNotesStore{}, nil)
+
+	for _, rawID := range []string{"0", "-1", "abc"} {
+		request := httptest.NewRequest(http.MethodGet, "/api/notes/"+rawID, nil)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("get id %q status code = %d, want %d", rawID, response.Code, http.StatusBadRequest)
+		}
 	}
 }

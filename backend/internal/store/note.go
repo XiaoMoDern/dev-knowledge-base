@@ -562,3 +562,55 @@ func (store *Store) SearchNotes(opts SearchOptions) (PaginatedNotes, error) {
 	}, nil
 
 }
+
+// GetNoteByID 按 ID 精确查单条 note，找不到返 sql.ErrNoRows
+//
+// 为什么需要这个方法：
+//   之前详情页/编辑页调 listNotes() 拿全表（第 1 页 20 条）再在内存 find(id)，
+//   第 21 条 + 之后全部 "not found"。本方法让前端按 ID 精确查，绕过内存 find。
+//
+// 为什么 err 不 wrap：
+//   handler 用 errors.Is(err, sql.ErrNoRows) 判 404，
+//   如果 wrap（%w 包一层），errors.Is 仍能匹配，但增加一层没必要。
+//   跟 line 106（CreateNote 内的回读）不同——那里是内部环节，wrap 排错有信息量；
+//   这里是"接力"给 handler，原样返最干净。
+
+func (store *Store) GetNoteByID(noteID int64) (Note, error) {
+	workspaceID, err := store.defaultWorkspaceID()
+	if err != nil {
+		return Note{}, err
+	}
+
+	var note Note
+	var categoryID sql.NullInt64
+	var categoryName sql.NullString
+
+	err = store.db.QueryRow(`
+        SELECT n.id, n.category_id, c.name AS category_name, n.title, n.content, n.visibility, n.created_at, n.updated_at
+        FROM notes n
+        LEFT JOIN categories c ON n.category_id = c.id
+        WHERE n.id = ? AND n.workspace_id = ?
+    `, noteID, workspaceID).Scan(
+		&note.ID,
+		&categoryID,
+		&categoryName,
+		&note.Title,
+		&note.Content,
+		&note.Visibility,
+		&note.CreatedAt,
+		&note.UpdatedAt,
+	)
+
+	if err != nil {
+		return Note{}, err
+	}
+
+	if categoryID.Valid {
+		note.CategoryID = &categoryID.Int64
+	}
+	if categoryName.Valid {
+		note.CategoryName = &categoryName.String
+	}
+
+	return note, nil
+}

@@ -539,3 +539,117 @@ func TestStoreSearchAndPaginate(t *testing.T) {
 		t.Fatalf("total = %d, want 10", result.Total)
 	}
 }
+
+// TestStoreGetNoteByID：建一条 note，按 ID 拿回完整数据（含 categoryName）
+// 验证：GetNoteByID 是按 ID 精确查，跟 ListNotes 的全表扫描不同路径
+func TestStoreGetNoteByID(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "dev-notes.db")
+	database, err := Open(databasePath)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("close database: %v", err)
+		}
+	})
+
+	created, err := database.CreateNote(CreateNoteInput{
+		Title:   "按 ID 查",
+		Content: "这条用来验证 GetNoteByID",
+	})
+	if err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+
+	fetched, err := database.GetNoteByID(created.ID)
+	if err != nil {
+		t.Fatalf("get note by ID %d: %v", created.ID, err)
+	}
+
+	if fetched.ID != created.ID {
+		t.Fatalf("fetched ID = %d, want %d", fetched.ID, created.ID)
+	}
+	if fetched.Title != created.Title {
+		t.Fatalf("fetched title = %q, want %q", fetched.Title, created.Title)
+	}
+	if fetched.Content != created.Content {
+		t.Fatalf("fetched content = %q, want %q", fetched.Content, created.Content)
+	}
+}
+
+// TestStoreGetNoteByIDMissingReturnsErrNoRows：找不到的 ID 必须返 sql.ErrNoRows，
+// 给 handler 用 errors.Is(err, sql.ErrNoRows) 判 404。
+// 这是 P1-A 第二页 bug 修复的核心约定：如果 store 错误处理变了，handler 404 逻辑会全坏。
+func TestStoreGetNoteByIDMissingReturnsErrNoRows(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "dev-notes.db")
+	database, err := Open(databasePath)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("close database: %v", err)
+		}
+	})
+
+	// 不存在的 ID（单用户数据库全新建，ID 从 1 起，999 一定没有）
+	_, err = database.GetNoteByID(999)
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("get missing note error = %v, want sql.ErrNoRows", err)
+	}
+}
+
+// TestStoreHasNoteTrue：建一条 note，HasNote(id) 返回 true。
+// 这是 Ray 第一次独立写的 store 方法——验证功能对、跑得通。
+func TestStoreHasNoteTrue(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "dev-notes.db")
+	database, err := Open(databasePath)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("close database: %v", err)
+		}
+	})
+
+	created, err := database.CreateNote(CreateNoteInput{
+		Title:   "存在的笔记",
+		Content: "用于验证 HasNote 返 true",
+	})
+	if err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+
+	exists, err := database.HasNote(created.ID)
+	if err != nil {
+		t.Fatalf("has note: %v", err)
+	}
+	if !exists {
+		t.Fatalf("has note for existing ID %d = false, want true", created.ID)
+	}
+}
+
+// TestStoreHasNoteFalse：不存在的 ID，HasNote 返回 false（不是 error，跟 GetNoteByID 区分）。
+// 关键差别：HasNote 用 boolean 而非 ErrNoRows 表达"不存在"——调用方不写 errors.Is。
+func TestStoreHasNoteFalse(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "dev-notes.db")
+	database, err := Open(databasePath)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("close database: %v", err)
+		}
+	})
+
+	exists, err := database.HasNote(999)
+	if err != nil {
+		t.Fatalf("has note: %v", err)
+	}
+	if exists {
+		t.Fatalf("has note for missing ID 999 = true, want false")
+	}
+}

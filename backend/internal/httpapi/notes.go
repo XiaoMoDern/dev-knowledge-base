@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -45,8 +44,6 @@ func (handler notesHandler) create(response http.ResponseWriter, request *http.R
 		writeJSON(response, http.StatusInternalServerError, map[string]string{"error": "创建笔记失败"})
 		return
 	}
-
-	log.Println("create note", input.Title, input.Content)
 
 	writeJSON(response, http.StatusCreated, note)
 }
@@ -93,7 +90,6 @@ func (handler notesHandler) list(response http.ResponseWriter, request *http.Req
 		Page:       page,
 		PageSize:   pageSize,
 	})
-
 
 	//notes, err := handler.notesStore.ListNotes()
 	if err != nil {
@@ -206,6 +202,29 @@ func (handler notesHandler) importBatch(response http.ResponseWriter, request *h
 	}
 	writeJSON(response, status, result)
 
+}
+
+func (handler notesHandler) getNote(response http.ResponseWriter, request *http.Request) {
+	rowID := request.PathValue("id")
+	noteID, err := strconv.ParseInt(rowID, 10, 64)
+	if err != nil || noteID <= 0 {
+		writeJSON(response, http.StatusBadRequest, map[string]string{"error": "笔记 ID 必须是正整数"})
+
+		return
+	}
+
+	note, err := handler.notesStore.GetNoteByID(noteID)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeJSON(response, http.StatusNotFound, map[string]string{"error": "笔记不存在"})
+		return
+	}
+
+	if err != nil {
+		writeJSON(response, http.StatusInternalServerError, map[string]string{"error": "查询笔记失败"})
+		return
+	}
+
+	writeJSON(response, http.StatusOK, note)
 }
 
 func writeJSON(response http.ResponseWriter, status int, body any) {
