@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 import vue from '@vitejs/plugin-vue'
 import AutoImport from 'unplugin-auto-import/vite'
 import Components from 'unplugin-vue-components/vite'
@@ -25,5 +25,10 @@ export default defineConfig({
     proxy: {
       '/api': 'http://127.0.0.1:8181',
     },
+  },
+  // Vitest 配置：DOMPurify 依赖浏览器 DOM，需要 jsdom 环境
+  test: {
+    environment: 'jsdom',
+    include: ['src/**/*.test.ts'],
   },
 })

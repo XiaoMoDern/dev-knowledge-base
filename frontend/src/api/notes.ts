@@ -26,16 +26,10 @@ export function searchNotes(params: searchNotesParams = {}): Promise<PaginatedNo
   return apiGet<PaginatedNotes>(`/api/notes${query ? '?' + query : ''}`)
 }
 
-// 兼容旧调用：按分类过滤（NoteDetailView / 老代码可能用）
-// 内部转发到 searchNotes({ categoryId })
-export function listNotesByCategory(categoryId: number): Promise<PaginatedNotes> {
-  return searchNotes({ categoryId })
-}
-
-// 兼容旧调用：拉全部分类笔记（NoteEditView 编辑模式复用、NoteDetailView 找引用等）
-// 内部转发到 searchNotes() 无参（page=1 pageSize=20）
-export function listNotes(): Promise<PaginatedNotes> {
-  return searchNotes()
+// GET /api/notes/:id —— 按 ID 精确查单条 note，返 Note 或抛 404
+// 替代之前的 listNotes() + 内存 find —— 之前方案第二页以后笔记永远找不到
+export function getNote(id: number): Promise<Note> {
+  return apiGet<Note>(`/api/notes/${id}`)
 }
 
 // POST /api/notes —— 创建

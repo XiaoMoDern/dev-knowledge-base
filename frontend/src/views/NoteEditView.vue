@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { listNotes, createNote, updateNote } from '../api/notes'
+import { ElMessage } from 'element-plus'
+import { getNote, createNote, updateNote } from '../api/notes'
 import { listCategories, createCategory } from '../api/categories'
-import type { Note, Category } from '../api/types'
+import type { Category } from '../api/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -36,25 +36,24 @@ async function loadCategories() {
   }
 }
 
-// 编辑模式从 listNotes 找 id 复用的笔记；找不到走 notFound
-// 不引入后端 getNote 接口，简单项目不值得多一次往返
+// 编辑模式按 ID 精确查单条 note（替代之前的 listNotes() + 内存 find）
 async function loadNote() {
   if (!isEdit) return
   loading.value = true
   error.value = ''
   notFound.value = false
   try {
-    const result = await listNotes()
-    const found = result.items.find((n: Note) => n.id === Number(route.params.id))
-    if (!found) {
-      notFound.value = true
-      return
-    }
+    const found = await getNote(Number(route.params.id))
     title.value = found.title
     content.value = found.content
     categoryId.value = found.categoryId ?? null
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e)
+    const msg = e instanceof Error ? e.message : String(e)
+    if (msg.includes('404')) {
+      notFound.value = true
+    } else {
+      error.value = msg
+    }
   } finally {
     loading.value = false
   }

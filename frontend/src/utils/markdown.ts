@@ -1,5 +1,6 @@
 import type { ImportNoteInput } from '../api/types'
 import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 
 // 单个文件解析结果：input=null 表示解析失败，error 字段说明原因
 export interface ParsedMarkdown {
@@ -49,11 +50,21 @@ export function parseMarkdownFile(fileName: string, text: string): ParsedMarkdow
 marked.use({ gfm: true, breaks: true })
 
 /**
- * markdown 文本 → HTML 字符串，给 v-html 用
- * 安全性：marked 默认 HTML escape（用户写的 <script> 不会被执行）
- * 信任源假设：单机本地应用，content 来自用户自己导入的 .md 文件，不加 DOMPurify
+ * markdown 文本 → 净化后的 HTML 字符串，给 v-html 用
+ *
+ * 安全两步走：
+ *   1. marked 解析 markdown 成 HTML（含 GFM 表格、删除线、任务列表）
+ *   2. DOMPurify 净化 HTML（移除 <script>、on* 事件属性、javascript: URL 等危险内容）
+ *
+ * 为什么必须净化：marked v5+ 不再自带 HTML 转义——inline HTML / `<script>` / `<img onerror=...>`
+ * 都会被原样输出。配合 v-html 会直接执行 XSS。
+ *
+ * 验收：见 src/utils/markdown.test.ts — `<img onerror>` / `<script>` / `javascript:` 三类危险输入都被移除。
  */
 export function renderMarkdown(text: string): string {
   // marked v18 parse 默认返回 Promise<string | undefined>，强制同步需要 async:false
-  return marked.parse(text, { async: false }) as string
+  const html = marked.parse(text, { async: false }) as string
+  // DOMPurify 默认配置就够：移除 <script>、on* 事件属性、javascript: URL；
+  // 保留常规 markdown 渲染出的标签（h1-h6 / p / a / pre / code / ul / ol / table / blockquote）
+  return DOMPurify.sanitize(html)
 }

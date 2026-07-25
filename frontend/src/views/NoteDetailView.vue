@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { listNotes, deleteNote } from '../api/notes'
+import { getNote, deleteNote } from '../api/notes'
 import type { Note } from '../api/types'
 import { renderMarkdown } from '../utils/markdown'
 
@@ -21,15 +21,16 @@ async function load() {
   error.value = ''
   notFound.value = false
   try {
-    const result = await listNotes()
-    const found = result.items.find((n: Note) => n.id === Number(route.params.id))
-    if (!found) {
-      notFound.value = true
-      return
-    }
-    note.value = found
+    note.value = await getNote(Number(route.params.id))
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e)
+    // axios 拦截器把 4xx/5xx 抛成 Error，message 含 status code
+    // 用字符串包含判断 404（避免引入 axios 类型）
+    const msg = e instanceof Error ? e.message : String(e)
+    if (msg.includes('404')) {
+      notFound.value = true
+    } else {
+      error.value = msg
+    }
   } finally {
     loading.value = false
   }

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { searchNotes, deleteNote } from '../api/notes'
+import { ElMessage } from 'element-plus'
+import { searchNotes } from '../api/notes'
 import type { Note, ImportResult } from '../api/types'
 import ImportDialog from '../components/ImportDialog.vue'
 import NoteCard from '../components/NoteCard.vue'
@@ -78,24 +78,6 @@ function onPageChange(newPage: number) {
   page.value = newPage
   load()
   syncURL()
-}
-
-async function onDelete(note: Note) {
-  try {
-    await ElMessageBox.confirm(`确定要删除「${note.title}」吗？`, '删除确认', {
-      type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消',
-    })
-  } catch { return }
-  try {
-    await deleteNote(note.id)
-    notes.value = notes.value.filter(n => n.id !== note.id)
-    total.value = Math.max(0, total.value - 1)
-    ElMessage.success('已删除')
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    error.value = msg
-    ElMessage.error(msg)
-  }
 }
 
 async function onImportSuccess(_result: ImportResult) {
