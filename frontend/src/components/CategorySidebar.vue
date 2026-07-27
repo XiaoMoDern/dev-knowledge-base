@@ -112,7 +112,7 @@ onMounted(() => {
       </div>
     </div>
 
-    <el-dialog v-model="showDialog" title="新建分类" width="380px">
+    <el-dialog v-model="showDialog" title="新建分类" width="380px" append-to-body>
       <el-input
         v-model="newName"
         placeholder="如 Go、Vue、读书笔记"
