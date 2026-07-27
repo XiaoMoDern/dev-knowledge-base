@@ -614,3 +614,23 @@ func (store *Store) GetNoteByID(noteID int64) (Note, error) {
 
 	return note, nil
 }
+
+// HasNote 按 ID 和默认工作空间判断笔记是否存在。
+func (store *Store) HasNote(noteID int64) (bool, error) {
+	workspaceID, err := store.defaultWorkspaceID()
+	if err != nil {
+		return false, err
+	}
+
+	var exists bool
+	err = store.db.QueryRow(`
+        SELECT EXISTS(
+            SELECT 1 FROM notes WHERE id = ? AND workspace_id = ?
+        )
+    `, noteID, workspaceID).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check note exists: %w", err)
+	}
+
+	return exists, nil
+}

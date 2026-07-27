@@ -7,19 +7,46 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
-func TestStoreCreatesAndListsNotes(t *testing.T) {
+// setupTestStore 为 store 包测试初始化一个干净的 SQLite 数据库。
+//
+// 调用方一行搞定：
+//   database := setupTestStore(t)
+//   // 紧接着写测试逻辑
+//
+// 不用管临时目录、清理、初始化路径——全在这。
+//
+// 设计要点：
+//   1. t.Helper() — 失败时打印调用方行号，不打 helper 内部
+//   2. t.TempDir() — 每个测试独立临时目录，自动清理 + 跨测试隔离
+//   3. store.Open() 自动迁移（CREATE TABLE IF NOT EXISTS），不用测试手动 init
+//   4. t.Cleanup vs defer — 测试函数专属，自动调度、跨 sub-test 共享
+//   5. return database 单一返回 — 不返 cleanup 出去，cleanup 走 t.Cleanup 自动挂钩（接口最小化）
+//   6. t.Fatalf vs t.Errorf — 数据库没准备好后续断言必失败，所以致命
+
+func setupTestStore(t *testing.T) *Store {
+	t.Helper()
+
 	databasePath := filepath.Join(t.TempDir(), "dev-notes.db")
 	database, err := Open(databasePath)
 	if err != nil {
 		t.Fatalf("open database: %v", err)
 	}
+
 	t.Cleanup(func() {
 		if err := database.Close(); err != nil {
 			t.Errorf("close database: %v", err)
 		}
 	})
+
+	return database
+}
+
+func TestStoreCreatesAndListsNotes(t *testing.T) {
+	database := setupTestStore(t)
 
 	created, err := database.CreateNote(CreateNoteInput{
 		Title:   "SQLite 自动迁移",
@@ -58,16 +85,7 @@ func TestStoreCreatesAndListsNotes(t *testing.T) {
 }
 
 func TestStoreDeletesNote(t *testing.T) {
-	databasePath := filepath.Join(t.TempDir(), "dev-notes.db")
-	database, err := Open(databasePath)
-	if err != nil {
-		t.Fatalf("open database: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := database.Close(); err != nil {
-			t.Errorf("close database: %v", err)
-		}
-	})
+	database := setupTestStore(t)
 
 	created, err := database.CreateNote(CreateNoteInput{
 		Title:   "待删除笔记",
@@ -94,16 +112,8 @@ func TestStoreDeletesNote(t *testing.T) {
 
 // TestStoreUpdatesNote：先建一条笔记 、 TestStoreUpdateMissingNoteReturnsErrNoRows：更新
 func TestStoreUpdatesNote(t *testing.T) {
-	databasePath := filepath.Join(t.TempDir(), "dev-notes.db")
-	database, err := Open(databasePath)
-	if err != nil {
-		t.Fatalf("open database: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := database.Close(); err != nil {
-			t.Errorf("close database: %v", err)
-		}
-	})
+	database := setupTestStore(t)
+
 	created, err := database.CreateNote(CreateNoteInput{
 		Title:   "待更新笔记",
 		Content: "这条笔记马上会被更新",
@@ -143,16 +153,7 @@ func TestStoreUpdatesNote(t *testing.T) {
 }
 
 func TestStoreImportsNotes(t *testing.T) {
-	databasePath := filepath.Join(t.TempDir(), "dev-notes.db")
-	database, err := Open(databasePath)
-	if err != nil {
-		t.Fatalf("open database: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := database.Close(); err != nil {
-			t.Errorf("close database: %v", err)
-		}
-	})
+	database := setupTestStore(t)
 
 	notes := []ImportNoteInput{
 		{Title: "笔记一", Content: "内容一"},
@@ -182,16 +183,7 @@ func TestStoreImportsNotes(t *testing.T) {
 }
 
 func TestStoreImportSkipsInvalidNotes(t *testing.T) {
-	databasePath := filepath.Join(t.TempDir(), "dev-notes.db")
-	database, err := Open(databasePath)
-	if err != nil {
-		t.Fatalf("open database: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := database.Close(); err != nil {
-			t.Errorf("close database: %v", err)
-		}
-	})
+	database := setupTestStore(t)
 
 	notes := []ImportNoteInput{
 		{Title: "笔记一", Content: "内容一"},
@@ -222,18 +214,9 @@ func TestStoreImportSkipsInvalidNotes(t *testing.T) {
 }
 
 func TestStoreUpdateMissingNoteReturnsErrNoRows(t *testing.T) {
-	databasePath := filepath.Join(t.TempDir(), "dev-notes.db")
-	database, err := Open(databasePath)
-	if err != nil {
-		t.Fatalf("open database: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := database.Close(); err != nil {
-			t.Errorf("close database: %v", err)
-		}
-	})
+	database := setupTestStore(t)
 
-	_, err = database.UpdateNote(999, UpdateNoteInput{
+	_, err := database.UpdateNote(999, UpdateNoteInput{
 		Title:   "不存在",
 		Content: "内容",
 	})
@@ -246,16 +229,7 @@ func TestStoreUpdateMissingNoteReturnsErrNoRows(t *testing.T) {
 // 关联分类的 note 应带 CategoryName，没分类的应是 nil。
 // 当前 ListNotes 还没加 JOIN，CategoryName 永远是 nil —— Red。
 func TestStoreListsNotesWithCategoryName(t *testing.T) {
-	databasePath := filepath.Join(t.TempDir(), "dev-notes.db")
-	database, err := Open(databasePath)
-	if err != nil {
-		t.Fatalf("open database: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := database.Close(); err != nil {
-			t.Errorf("close database: %v", err)
-		}
-	})
+	database := setupTestStore(t)
 
 	// 1. 建分类
 	category, err := database.CreateCategory("Go")
@@ -311,16 +285,7 @@ func TestStoreListsNotesWithCategoryName(t *testing.T) {
 // 关联 cat1 的 note 出现，关联 cat2 的 note 不出现，没分类的 note 不出现。
 // 当前 ListNotesByCategory 还没实现 —— Red。
 func TestStoreListsNotesByCategory(t *testing.T) {
-	databasePath := filepath.Join(t.TempDir(), "dev-notes.db")
-	database, err := Open(databasePath)
-	if err != nil {
-		t.Fatalf("open database: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := database.Close(); err != nil {
-			t.Errorf("close database: %v", err)
-		}
-	})
+	database := setupTestStore(t)
 
 	// 1. 建 2 个分类
 	catGo, err := database.CreateCategory("Go")
@@ -386,16 +351,7 @@ func TestStoreListsNotesByCategory(t *testing.T) {
 // TestStoreSearchNotesByKeyword 验证搜索关键字过滤：title 或 content 含关键字的 note 都返回。
 // 当前 SearchNotes 还没实现 —— Red。
 func TestStoreSearchNotesByKeyword(t *testing.T) {
-	databasePath := filepath.Join(t.TempDir(), "dev-notes.db")
-	database, err := Open(databasePath)
-	if err != nil {
-		t.Fatalf("open database: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := database.Close(); err != nil {
-			t.Errorf("close database: %v", err)
-		}
-	})
+	database := setupTestStore(t)
 
 	workspaceID, err := database.defaultWorkspaceID()
 	if err != nil {
@@ -442,16 +398,7 @@ func TestStoreSearchNotesByKeyword(t *testing.T) {
 // ORDER BY updated_at DESC：note-25 在前，note-1 在后。
 // 当前 SearchNotes 还没实现 —— Red。
 func TestStoreListsNotesWithPagination(t *testing.T) {
-	databasePath := filepath.Join(t.TempDir(), "dev-notes.db")
-	database, err := Open(databasePath)
-	if err != nil {
-		t.Fatalf("open database: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := database.Close(); err != nil {
-			t.Errorf("close database: %v", err)
-		}
-	})
+	database := setupTestStore(t)
 
 	workspaceID, err := database.defaultWorkspaceID()
 	if err != nil {
@@ -495,16 +442,7 @@ func TestStoreListsNotesWithPagination(t *testing.T) {
 // 搜 "Go" page=1 pageSize=5 → 5 条 total=10。
 // 当前 SearchNotes 还没实现 —— Red。
 func TestStoreSearchAndPaginate(t *testing.T) {
-	databasePath := filepath.Join(t.TempDir(), "dev-notes.db")
-	database, err := Open(databasePath)
-	if err != nil {
-		t.Fatalf("open database: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := database.Close(); err != nil {
-			t.Errorf("close database: %v", err)
-		}
-	})
+	database := setupTestStore(t)
 
 	workspaceID, err := database.defaultWorkspaceID()
 	if err != nil {
@@ -542,77 +480,44 @@ func TestStoreSearchAndPaginate(t *testing.T) {
 
 // TestStoreGetNoteByID：建一条 note，按 ID 拿回完整数据（含 categoryName）
 // 验证：GetNoteByID 是按 ID 精确查，跟 ListNotes 的全表扫描不同路径
+//
+// Phase E.1：assert.Equal 替代 if t.Fatalf 样板。
+//
+//	Before：每个字段 3 行 assert（want xx / got xx / error msg），共 9 行
+//	After ：每个字段 1 行 assert.Equal，共 3 行
 func TestStoreGetNoteByID(t *testing.T) {
-	databasePath := filepath.Join(t.TempDir(), "dev-notes.db")
-	database, err := Open(databasePath)
-	if err != nil {
-		t.Fatalf("open database: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := database.Close(); err != nil {
-			t.Errorf("close database: %v", err)
-		}
-	})
+	database := setupTestStore(t)
 
 	created, err := database.CreateNote(CreateNoteInput{
 		Title:   "按 ID 查",
 		Content: "这条用来验证 GetNoteByID",
 	})
-	if err != nil {
-		t.Fatalf("create note: %v", err)
-	}
+	assert.NoError(t, err)
 
 	fetched, err := database.GetNoteByID(created.ID)
-	if err != nil {
-		t.Fatalf("get note by ID %d: %v", created.ID, err)
-	}
+	assert.NoError(t, err)
 
-	if fetched.ID != created.ID {
-		t.Fatalf("fetched ID = %d, want %d", fetched.ID, created.ID)
-	}
-	if fetched.Title != created.Title {
-		t.Fatalf("fetched title = %q, want %q", fetched.Title, created.Title)
-	}
-	if fetched.Content != created.Content {
-		t.Fatalf("fetched content = %q, want %q", fetched.Content, created.Content)
-	}
+	// assert.Equal 自动 %v 格式化 + 失败时打印 want/got/diff，省掉 3 行手写模板
+	assert.Equal(t, created.ID, fetched.ID, "ID 应一致")
+	assert.Equal(t, created.Title, fetched.Title, "Title 应一致")
+	assert.Equal(t, created.Content, fetched.Content, "Content 应一致")
 }
 
 // TestStoreGetNoteByIDMissingReturnsErrNoRows：找不到的 ID 必须返 sql.ErrNoRows，
 // 给 handler 用 errors.Is(err, sql.ErrNoRows) 判 404。
 // 这是 P1-A 第二页 bug 修复的核心约定：如果 store 错误处理变了，handler 404 逻辑会全坏。
 func TestStoreGetNoteByIDMissingReturnsErrNoRows(t *testing.T) {
-	databasePath := filepath.Join(t.TempDir(), "dev-notes.db")
-	database, err := Open(databasePath)
-	if err != nil {
-		t.Fatalf("open database: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := database.Close(); err != nil {
-			t.Errorf("close database: %v", err)
-		}
-	})
+	database := setupTestStore(t)
 
 	// 不存在的 ID（单用户数据库全新建，ID 从 1 起，999 一定没有）
-	_, err = database.GetNoteByID(999)
-	if !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("get missing note error = %v, want sql.ErrNoRows", err)
-	}
+	_, err := database.GetNoteByID(999)
+	assert.ErrorIs(t, err, sql.ErrNoRows)
 }
 
 // TestStoreHasNoteTrue：建一条 note，HasNote(id) 返回 true。
 // 这是 Ray 第一次独立写的 store 方法——验证功能对、跑得通。
 func TestStoreHasNoteTrue(t *testing.T) {
-	databasePath := filepath.Join(t.TempDir(), "dev-notes.db")
-	database, err := Open(databasePath)
-	if err != nil {
-		t.Fatalf("open database: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := database.Close(); err != nil {
-			t.Errorf("close database: %v", err)
-		}
-	})
+	database := setupTestStore(t)
 
 	created, err := database.CreateNote(CreateNoteInput{
 		Title:   "存在的笔记",
@@ -634,16 +539,7 @@ func TestStoreHasNoteTrue(t *testing.T) {
 // TestStoreHasNoteFalse：不存在的 ID，HasNote 返回 false（不是 error，跟 GetNoteByID 区分）。
 // 关键差别：HasNote 用 boolean 而非 ErrNoRows 表达"不存在"——调用方不写 errors.Is。
 func TestStoreHasNoteFalse(t *testing.T) {
-	databasePath := filepath.Join(t.TempDir(), "dev-notes.db")
-	database, err := Open(databasePath)
-	if err != nil {
-		t.Fatalf("open database: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := database.Close(); err != nil {
-			t.Errorf("close database: %v", err)
-		}
-	})
+	database := setupTestStore(t)
 
 	exists, err := database.HasNote(999)
 	if err != nil {

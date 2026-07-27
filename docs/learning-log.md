@@ -189,4 +189,28 @@
 - 易错点（教学价值，本次未踩但要记住）：`INSERT INTO ... VALUES (?, ?, 'private', ?)` 加列时要**同步加 `?` + 算字面量**——列数 = `?` 数 + 字面量数，否则 DB 写 NULL 但 SQL 不报错。
 - 教训：**TDD 跑全量（`go test ./...`）是教学纪律的核心**——比"看代码像对"靠谱，比"看 commit diff"靠谱，比"口头确认"靠谱 100 倍。
 
+## 2026-07-25：Phase E 启动 — 表驱动 + testify + helper DRY 化 + 教学方式二次调整
+- **动机**：dev-notebook 40 个测试全是 `if t.Fatalf("x = %v, want %v", ...)` 一坨，重复 9 行 setup 18 遍。testify + 表驱动 + helper 是 Go 测试代码标准写法。
+- **Phase E.1（我示范）**：改 2 个测试：TestStoreGetNoteByID 用 `assert.Equal` 替代 9 行样板；TestNotesHandlerRejectsInvalidGetID 用 `tests := []struct{...}{...}` + `t.Run(tt.name, ...)` 表驱动，跑 `-v` 看到子测试名 `/zero /negative /non-numeric`。
+- **Phase E.2（Ray 自己写）**：Ray 改 TestNotesHandlerRejectsInvalidDeleteID 用表驱动 + 中文 sub-test 名（"ID 为 0" / "负数 ID" / "非数字 ID"）+ `require.Equal`（不是 assert！）。改 TestStoreGetNoteByIDMissingReturnsErrNoRows 用 `assert.ErrorIs(t, err, sql.ErrNoRows)`。Ray 主动延伸 = 好信号。
+- **helper DRY 化**：Ray 自发把 30 行 `setupTestStore` helper 写进 note_test.go 顶部 + 改了 13 处测试用 helper 调用。setup 从 9 行砍成 1 行。
+- **`=` vs `:=` scope 错位**（双向编译错规律）：Ray 砍 setup 后下游业务调用 `_, err = database.GetNoteByID(999)` 报 "undefined: err"（err 不再声明）。修法：`=` 改 `:=`。**这个规则：声明要在场才能 `=` 重新赋值；`:=` 才能声明新变量**。
+- **Ray 反思"独立写蒙圈"**：自报"看代码懂、放开写蒙，跟学前端一样"。教学纪律里写过"学员坦白'还不会'时要回退一阶"——我回退到 4 阶阶梯：**1 看完整示例 → 2 抄写调试 → 3 小改 → 4 独立写**。当前进度停在第 1-2 阶（已写 helper + 改了 13 处测试），还没进第 4 阶独立写。
+- **`testing.T.Helper()`** 的失败定位：标 `Helper()` 后测试失败打印**调用方**行号，不打 helper 内部。helper 标配。
+- **`t.TempDir()` vs `os.MkdirTemp`**：前者自动清理 + 跨测试隔离；后者要 defer RemoveAll。测试 helper 一律用 `t.TempDir()`。
+- **`t.Cleanup` vs `defer`**：`t.Cleanup` 在测试结束（无论 pass/fail）跑、跨 sub-test 共享；`defer` 函数返回时跑。helper 用 `t.Cleanup` 注册 Close 更稳。
+- **教学点（不是知识点）**：
+  - 跨域学新语言必经"看代码懂 / 独立写蒙"——Ray 学前端时走过一次
+  - 教学方式回退不是走偏，是精确匹配学员阶段
+  - 4 阶阶梯比一次性"独立写"对新手友好得多
+  - 学员主动反思"我不行"是强信号，要回退一阶而非推着继续
+
+## 教学纪律迭代日志
+
+| 日期 | 调整 |
+|---|---|
+| 2026-07-22 | 铁律·10：后端 `*.go` 业务代码 Ray 自己写；`*_test.go` 我能改（mock/测试基础设施）|
+| 2026-07-24 | 不再贴 diff；后端 store/handler Ray 自己写；Phase D 暂停到独立写过 2-3 个 Go 函数；200 字反思环节砍掉改 review 时口头问 |
+| 2026-07-25 | 4 阶教学阶梯（看完整示例 → 抄写 → 小改 → 独立写）——Ray "看代码懂独立写蒙"阶段回退一阶 |
+
 

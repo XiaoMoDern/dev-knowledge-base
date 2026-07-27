@@ -11,10 +11,23 @@ import (
 	"testing"
 
 	"github.com/XiaoMoDern/dev-knowledge-base/backend/internal/store"
+	"github.com/stretchr/testify/assert"
 )
 
 type fakeNotesStore struct {
 	notes []store.Note
+}
+
+// newTestHandler 给 handler 测试一个用空 fakeNotesStore 的 http.Handler。
+// 不需要预填数据的测试用它——1 行调用代替 2 行 NewHandler(&fakeNotesStore{}, nil)。
+//
+// 用法：
+//   handler := newTestHandler(t)
+//
+// 需要 pre-populated notes 的测试不走这个 helper——直接 NewHandler(&fakeNotesStore{notes: ...}, nil)。
+func newTestHandler(t *testing.T) http.Handler {
+	t.Helper()
+	return NewHandler(&fakeNotesStore{}, nil)
 }
 
 func (fake *fakeNotesStore) CreateNote(input store.CreateNoteInput) (store.Note, error) {
@@ -168,7 +181,7 @@ func TestNotesHandlerCreatesAndListsNotes(t *testing.T) {
 }
 
 func TestNotesHandlerRejectsBlankTitle(t *testing.T) {
-	handler := NewHandler(&fakeNotesStore{}, nil)
+	handler := newTestHandler(t)
 	request := httptest.NewRequest(http.MethodPost, "/api/notes", bytes.NewBufferString(`{"title":"   ","content":"正文"}`))
 	response := httptest.NewRecorder()
 
@@ -200,21 +213,32 @@ func TestNotesHandlerDeletesNote(t *testing.T) {
 }
 
 func TestNotesHandlerRejectsInvalidDeleteID(t *testing.T) {
-	handler := NewHandler(&fakeNotesStore{}, nil)
+	handler := newTestHandler(t)
 
-	for _, rawID := range []string{"0", "-1", "abc"} {
-		request := httptest.NewRequest(http.MethodDelete, "/api/notes/"+rawID, nil)
-		response := httptest.NewRecorder()
-		handler.ServeHTTP(response, request)
+	//表驱动
+	tests := []struct {
+		name  string
+		rawID string
+	}{
+		{"ID 为 0", "0"},
+		{"负数 ID", "-1"},
+		{"非数字 ID", "abc"},
+	}
 
-		if response.Code != http.StatusBadRequest {
-			t.Fatalf("delete id %q status code = %d, want %d", rawID, response.Code, http.StatusBadRequest)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodDelete, "/api/notes/"+tt.rawID, nil)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+
+			assert.Equal(t, http.StatusBadRequest, response.Code,
+				"delete id %q 应返回 400，实际: %d", tt.rawID, response.Code)
+		})
 	}
 }
 
 func TestNotesHandlerDeleteMissingNoteReturns404(t *testing.T) {
-	handler := NewHandler(&fakeNotesStore{}, nil)
+	handler := newTestHandler(t)
 
 	request := httptest.NewRequest(http.MethodDelete, "/api/notes/999", nil)
 	response := httptest.NewRecorder()
@@ -255,7 +279,7 @@ func TestNotesHandlerUpdatesNote(t *testing.T) {
 }
 
 func TestNotesHandlerRejectsInvalidUpdateID(t *testing.T) {
-	handler := NewHandler(&fakeNotesStore{}, nil)
+	handler := newTestHandler(t)
 
 	for _, rawID := range []string{"0", "-1", "abc"} {
 		request := httptest.NewRequest(http.MethodPut, "/api/notes/"+rawID, bytes.NewBufferString(`{"title":"x","content":"y"}`))
@@ -319,7 +343,7 @@ func (f *fakeNotesStore) ImportNotes(inputs []store.ImportNoteInput) (store.Impo
 }
 
 func TestNotesHandlerUpdateMissingNoteReturns404(t *testing.T) {
-	handler := NewHandler(&fakeNotesStore{}, nil)
+	handler := newTestHandler(t)
 
 	request := httptest.NewRequest(http.MethodPut, "/api/notes/999", bytes.NewBufferString(`{"title":"x","content":"y"}`))
 	response := httptest.NewRecorder()
@@ -363,7 +387,7 @@ func TestNotesHandlerListsByCategory(t *testing.T) {
 
 // TestNotesHandlerRejectsInvalidCategoryID 验证 ?categoryId= 非整数 / 负数 → 400
 func TestNotesHandlerRejectsInvalidCategoryID(t *testing.T) {
-	handler := NewHandler(&fakeNotesStore{}, nil)
+	handler := newTestHandler(t)
 
 	for _, raw := range []string{"abc", "-1"} {
 		request := httptest.NewRequest(http.MethodGet, "/api/notes?categoryId="+raw, nil)
@@ -480,7 +504,7 @@ func TestNotesHandlerGetByID(t *testing.T) {
 // TestNotesHandlerGetMissingReturns404：找不到的 ID 必须 404，不能用 500 蒙混过关。
 // 404 是约定的"客户端错了（指错 ID）"语义；500 是"服务端炸了"语义——不能混。
 func TestNotesHandlerGetMissingReturns404(t *testing.T) {
-	handler := NewHandler(&fakeNotesStore{}, nil)
+	handler := newTestHandler(t)
 
 	request := httptest.NewRequest(http.MethodGet, "/api/notes/999", nil)
 	response := httptest.NewRecorder()
@@ -492,16 +516,36 @@ func TestNotesHandlerGetMissingReturns404(t *testing.T) {
 }
 
 // TestNotesHandlerRejectsInvalidGetID：路径参数守门——非正整数 ID 必须 400，跟 delete/update 同款。
+//
+// Phase E.1：for-range 跑多场景改表驱动 + assert.Equal。
+//
+//	Before：for 循环 + t.Fatalf 包在循环里，失败就终止整个测试
+//	After ：tests := []struct{...}{...} 表驱动 + t.Run 子测试，每个失败独立报不影响其他场景
+//
+// 表驱动优势：
+//  1. 加新场景只加一行 struct，不用复制 paste for 循环
+//  2. 子测试名自动出现在测试输出（t.Run(tt.name, ...)），失败容易定位
+//  3. 想跑某个特定场景用 `go test -run TestX/<subname>`
 func TestNotesHandlerRejectsInvalidGetID(t *testing.T) {
-	handler := NewHandler(&fakeNotesStore{}, nil)
+	handler := newTestHandler(t)
 
-	for _, rawID := range []string{"0", "-1", "abc"} {
-		request := httptest.NewRequest(http.MethodGet, "/api/notes/"+rawID, nil)
-		response := httptest.NewRecorder()
-		handler.ServeHTTP(response, request)
+	tests := []struct {
+		name  string
+		rawID string
+	}{
+		{name: "zero", rawID: "0"},
+		{name: "negative", rawID: "-1"},
+		{name: "non-numeric", rawID: "abc"},
+	}
 
-		if response.Code != http.StatusBadRequest {
-			t.Fatalf("get id %q status code = %d, want %d", rawID, response.Code, http.StatusBadRequest)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/api/notes/"+tt.rawID, nil)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+
+			assert.Equal(t, http.StatusBadRequest, response.Code,
+				"非正整数 ID %q 应该被拒，但 handler 返了 %d", tt.rawID, response.Code)
+		})
 	}
 }
