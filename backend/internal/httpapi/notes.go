@@ -60,9 +60,8 @@ func (handler notesHandler) list(response http.ResponseWriter, request *http.Req
 			writeJSON(response, http.StatusBadRequest, map[string]string{"error": "categoryId 必须是非负整数"})
 			return
 		}
-		if parsed > 0 {
-			categoryID = &parsed
-		}
+		// 0 = "未分类"（保留，传给 store 翻译成 IS NULL）；>0 = 具体分类
+		categoryID = &parsed
 	}
 
 	page := 1
@@ -132,9 +131,9 @@ func (handler notesHandler) update(response http.ResponseWriter, request *http.R
 		return
 	}
 	var input struct {
-		Title      string `json:"title"`
-		Content    string `json:"content"`
-		CategoryID *int64 `json:"categoryId"`
+		Title      string  `json:"title"`
+		Content    string  `json:"content"`
+		CategoryID **int64 `json:"categoryId"`
 	}
 	decoder := json.NewDecoder(request.Body)
 	decoder.DisallowUnknownFields()

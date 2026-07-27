@@ -549,3 +549,142 @@ func TestStoreHasNoteFalse(t *testing.T) {
 		t.Fatalf("has note for missing ID 999 = true, want false")
 	}
 }
+
+// TestStoreSearchNotes_DoesNotLeakAcrossWorkspaces 修复 P0-1：
+//
+//	SearchNotes 的 OR 组没加括号，SQL 优先级把 OR 拆散——
+//	"workspace_id=? AND title LIKE ?" 单独一组，但 "content LIKE ?" 漂在 AND 外，
+//	多 workspace 场景下 content 命中会绕过 workspace_id 隔离。
+//
+// 回归：建第二个 workspace + user + 一条带 keyword 的 note，
+// 调 SearchNotes（固定走 defaultWorkspaceID），断言结果集不包含它。
+func TestStoreSearchNotes_DoesNotLeakAcrossWorkspaces(t *testing.T) {
+	database := setupTestStore(t)
+
+	// 直接插第二个 workspace + user（绕开 defaultWorkspaceID，确保能造出"另一个 workspace"）
+	_, err := database.db.Exec(`INSERT INTO users (username, created_at) VALUES ('user2', '2026-07-27T00:00:00Z')`)
+	assert.NoError(t, err)
+	var user2ID int64
+	assert.NoError(t, database.db.QueryRow(`SELECT id FROM users WHERE username='user2'`).Scan(&user2ID))
+	_, err = database.db.Exec(`INSERT INTO workspaces (name, owner_user_id, created_at) VALUES ('ws2', ?, '2026-07-27T00:00:00Z')`, user2ID)
+	assert.NoError(t, err)
+	var ws2ID int64
+	assert.NoError(t, database.db.QueryRow(`SELECT id FROM workspaces WHERE name='ws2'`).Scan(&ws2ID))
+
+	// default workspace 也插一条 note（确保搜索结果不为空能区分"没命中" vs "没数据"）
+	_, err = database.CreateNote(CreateNoteInput{Title: "default", Content: ""})
+	assert.NoError(t, err)
+
+	// ws2 workspace 插一条 note，正文含 "leak"
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err = database.db.Exec(`
+		INSERT INTO notes (workspace_id, title, content, visibility, created_at, updated_at)
+		VALUES (?, 'ws2 note', 'this content should leak', 'private', ?, ?)
+	`, ws2ID, now, now)
+	assert.NoError(t, err)
+
+	// SearchNotes 走 defaultWorkspaceID()，搜 "leak"——如果 SQL 括号修复，
+	// content 分支会被 workspace_id 隔离，不会返 ws2 的 note
+	result, err := database.SearchNotes(SearchOptions{Query: "leak", Page: 1, PageSize: 10})
+	assert.NoError(t, err)
+	assert.Equal(t, 0, result.Total, "跨 workspace 的 content 命中不应进入 default workspace 搜索结果")
+	assert.Empty(t, result.Items, "搜索结果必须为空（不能跨 workspace 泄漏）")
+}
+
+// TestStoreUpdateNote_CategoryIDTriState 修复 P0-3：
+//
+//	UpdateNoteInput.CategoryID 三态语义：
+//	  *CategoryID == nil  → 字段 omitted → 不更新 category_id
+//	  *CategoryID != nil 且 *(*CategoryID) == nil  → explicit null → 清空 category_id
+//	  *CategoryID != nil 且 *(*CategoryID) != nil  → 设置为 *(*CategoryID)
+//
+// Go 指针的双重指针（**int64）是 idiomatic 表达 "presence vs null" 的方式。
+func TestStoreUpdateNote_CategoryIDTriState(t *testing.T) {
+	database := setupTestStore(t)
+
+	// 准备：建一个分类，把 note 设到这个分类下
+	cat, err := database.CreateCategory("Go")
+	assert.NoError(t, err)
+	catID := cat.ID
+
+	created, err := database.CreateNote(CreateNoteInput{
+		Title:      "待编辑",
+		Content:    "原内容",
+		CategoryID: &catID,
+	})
+	assert.NoError(t, err)
+	assert.NotNil(t, created.CategoryID, "新建时设了分类，CategoryID 应该非 nil")
+
+	// 状态 1：omit → 不更新 category_id（用零值指针表达"字段没出现"）
+	var omitted **int64 // outer nil
+	updated, err := database.UpdateNote(created.ID, UpdateNoteInput{
+		Title:      "改标题",
+		Content:    "改内容",
+		CategoryID: omitted,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, "改标题", updated.Title)
+	assert.NotNil(t, updated.CategoryID, "omit 时分类应保留原值")
+	assert.Equal(t, catID, *updated.CategoryID)
+
+	// 状态 2：explicit null → 清空 category_id（**int64 的 inner 是 nil）
+	var cleared **int64
+	clearedInt := (*int64)(nil)
+	cleared = &clearedInt
+	updated, err = database.UpdateNote(created.ID, UpdateNoteInput{
+		Title:      "改标题2",
+		Content:    "改内容2",
+		CategoryID: cleared,
+	})
+	assert.NoError(t, err)
+	assert.Nil(t, updated.CategoryID, "explicit null 应清空分类")
+
+	// 状态 3：set new id → 改为新分类
+	cat2, err := database.CreateCategory("Vue")
+	assert.NoError(t, err)
+	cat2ID := cat2.ID
+	setNew := &cat2ID
+	updated, err = database.UpdateNote(created.ID, UpdateNoteInput{
+		Title:      "改标题3",
+		Content:    "改内容3",
+		CategoryID: &setNew,
+	})
+	assert.NoError(t, err)
+	assert.NotNil(t, updated.CategoryID)
+	assert.Equal(t, cat2ID, *updated.CategoryID, "explicit set 应改为新分类")
+}
+
+// TestStoreSearchNotes_UncategorizedReturnsOnlyNullCategory 修复 P0-4：
+//
+//	"未分类"语义：opts.CategoryID == &0 应翻译成 WHERE category_id IS NULL。
+//	当前实现忽略 0，结果是不过滤——前端 UI 显示"未分类"实际返全部笔记。
+func TestStoreSearchNotes_UncategorizedReturnsOnlyNullCategory(t *testing.T) {
+	database := setupTestStore(t)
+
+	cat, err := database.CreateCategory("Go")
+	assert.NoError(t, err)
+	catID := cat.ID
+
+	// 3 条 note：2 条关联 cat，1 条无分类
+	_, err = database.CreateNote(CreateNoteInput{Title: "Go 笔记", CategoryID: &catID})
+	assert.NoError(t, err)
+	_, err = database.CreateNote(CreateNoteInput{Title: "无分类 1"})
+	assert.NoError(t, err)
+	_, err = database.CreateNote(CreateNoteInput{Title: "无分类 2"})
+	assert.NoError(t, err)
+
+	// 拿 zero 值（*int64 指向 0）
+	zero := int64(0)
+
+	// opts.CategoryID = &0 → 翻译成 IS NULL
+	result, err := database.SearchNotes(SearchOptions{
+		CategoryID: &zero,
+		Page:       1,
+		PageSize:   10,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, 2, result.Total, "未分类应只返 2 条无分类笔记")
+	for _, item := range result.Items {
+		assert.Nil(t, item.CategoryID, "未分类结果里所有 item.CategoryID 应为 nil")
+	}
+}

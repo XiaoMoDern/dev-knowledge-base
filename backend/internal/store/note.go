@@ -28,7 +28,7 @@ type CreateNoteInput struct {
 type UpdateNoteInput struct {
 	Title      string
 	Content    string
-	CategoryID *int64
+	CategoryID **int64 //  双指针表达"字段是否出现"：
 }
 
 // ImportNoteInput 是批量导入的单条输入
@@ -221,19 +221,45 @@ func (store *Store) UpdateNote(noteID int64, input UpdateNoteInput) (Note, error
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	var result sql.Result
 
-	if input.CategoryID != nil {
-		result, err = store.db.Exec(`
-			UPDATE notes
-			SET title = ?, content = ?, category_id = ?, updated_at = ?
-			WHERE id = ? AND workspace_id = ?
-		`, input.Title, input.Content, *input.CategoryID, now, noteID, workspaceID)
-	} else {
+	// 三态分支见 UpdateNoteInput.CategoryID 注释
+	// 三态分支见 UpdateNoteInput.CategoryID 注释
+	switch {
+	case input.CategoryID == nil:
+		// omitted：不更新 category_id
 		result, err = store.db.Exec(`
 			UPDATE notes
 			SET title = ?, content = ?, updated_at = ?
 			WHERE id = ? AND workspace_id = ?
 		`, input.Title, input.Content, now, noteID, workspaceID)
+	case *input.CategoryID == nil:
+		// explicit null：清空 category_id（写 NULL）
+		result, err = store.db.Exec(`
+			UPDATE notes
+			SET title = ?, content = ?, category_id = NULL, updated_at = ?
+			WHERE id = ? AND workspace_id = ?
+		`, input.Title, input.Content, now, noteID, workspaceID)
+	default:
+		// set：更新为新 ID
+		result, err = store.db.Exec(`
+			UPDATE notes
+			SET title = ?, content = ?, category_id = ?, updated_at = ?
+			WHERE id = ? AND workspace_id = ?
+		`, input.Title, input.Content, **input.CategoryID, now, noteID, workspaceID)
 	}
+
+	//if input.CategoryID != nil {
+	//	result, err = store.db.Exec(`
+	//		UPDATE notes
+	//		SET title = ?, content = ?, category_id = ?, updated_at = ?
+	//		WHERE id = ? AND workspace_id = ?
+	//	`, input.Title, input.Content, *input.CategoryID, now, noteID, workspaceID)
+	//} else {
+	//	result, err = store.db.Exec(`
+	//		UPDATE notes
+	//		SET title = ?, content = ?, updated_at = ?
+	//		WHERE id = ? AND workspace_id = ?
+	//	`, input.Title, input.Content, now, noteID, workspaceID)
+	//}
 
 	if err != nil {
 		return Note{}, fmt.Errorf("update note: %w", err)
@@ -471,14 +497,22 @@ func (store *Store) SearchNotes(opts SearchOptions) (PaginatedNotes, error) {
 
 	if opts.Query != "" {
 		// %keyword% 包含匹配：注意用 fmt.Sprintf 拼 %，不要拼到 SQL 字符串
-		whereClause = append(whereClause, fmt.Sprintf("n.title LIKE ? OR n.content LIKE ?"))
+		// 整个 OR 组用括号包起来：SQL 中 AND 优先级高于 OR，
+		// 不加括号会让 `content LIKE ?` 漂在 workspace 隔离之外，
+		// 多 workspace 数据泄漏路径
+		//whereClause = append(whereClause, fmt.Sprintf("n.title LIKE ? OR n.content LIKE ?"))
+		whereClause = append(whereClause, fmt.Sprintf("(n.title LIKE ? OR n.content LIKE ?)"))
 		pattern := "%" + opts.Query + "%"
 		args = append(args, pattern, pattern)
 	}
-
 	if opts.CategoryID != nil {
-		whereClause = append(whereClause, "n.category_id = ?")
-		args = append(args, *opts.CategoryID)
+		if *opts.CategoryID == 0 {
+			whereClause = append(whereClause, "n.category_id IS NULL")
+
+		} else {
+			whereClause = append(whereClause, "n.category_id = ?")
+			args = append(args, *opts.CategoryID)
+		}
 	}
 
 	whereSQL := strings.Join(whereClause, " AND ")

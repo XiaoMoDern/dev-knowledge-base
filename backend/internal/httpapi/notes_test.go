@@ -68,11 +68,30 @@ func (fake *fakeNotesStore) GetNoteByID(noteID int64) (store.Note, error) {
 	return store.Note{}, sql.ErrNoRows
 }
 
+// UpdateNote 是 fake 实现：跟真 store 行为一致——按 ID 找 + 三态 CategoryID。
+//
+// 三态语义（跟 store.UpdateNote 对齐）：
+//   input.CategoryID == nil                  → 字段 omitted → 不动 note.CategoryID
+//   *input.CategoryID == nil（双 nil）         → explicit null → 清空 note.CategoryID
+//   *input.CategoryID != nil                 → 设 note.CategoryID = *(*input.CategoryID)
+//
+// fake 的校验要和真 store 保持一致，否则 httpapi 测出来的状态码和真接口对不上
+// ——这条注释从 ImportNotes 沿用到 UpdateNote。
 func (fake *fakeNotesStore) UpdateNote(noteID int64, input store.UpdateNoteInput) (store.Note, error) {
 	for i, note := range fake.notes {
 		if note.ID == noteID {
 			fake.notes[i].Title = input.Title
 			fake.notes[i].Content = input.Content
+			switch {
+			case input.CategoryID == nil:
+				// omitted：不更新 category_id
+			case *input.CategoryID == nil:
+				// explicit null：清空
+				fake.notes[i].CategoryID = nil
+			default:
+				newID := **input.CategoryID
+				fake.notes[i].CategoryID = &newID
+			}
 			return fake.notes[i], nil
 		}
 	}
@@ -93,6 +112,9 @@ func (fake *fakeNotesStore) ListNotesByCategory(categoryID int64) ([]store.Note,
 
 // SearchNotes 是 fake 实现：跟真 store 行为一致——按 q / categoryId 过滤 + 分页。
 // fake 不维护 CategoryName（不建 categories 表），Items 里 CategoryName 永远是 nil。
+//
+// categoryId 特殊值：*opts.CategoryID == 0 表示"未分类"（前端 URL 约定），
+// fake 跟真 store 一致——翻译成 note.CategoryID == nil。
 func (f *fakeNotesStore) SearchNotes(opts store.SearchOptions) (store.PaginatedNotes, error) {
 	var filtered []store.Note
 	for _, note := range f.notes {
@@ -102,7 +124,12 @@ func (f *fakeNotesStore) SearchNotes(opts store.SearchOptions) (store.PaginatedN
 			}
 		}
 		if opts.CategoryID != nil {
-			if note.CategoryID == nil || *note.CategoryID != *opts.CategoryID {
+			if *opts.CategoryID == 0 {
+				// 未分类：note.CategoryID 必须是 nil
+				if note.CategoryID != nil {
+					continue
+				}
+			} else if note.CategoryID == nil || *note.CategoryID != *opts.CategoryID {
 				continue
 			}
 		}
@@ -397,6 +424,37 @@ func TestNotesHandlerRejectsInvalidCategoryID(t *testing.T) {
 		if response.Code != http.StatusBadRequest {
 			t.Fatalf("categoryId=%q status code = %d, want %d", raw, response.Code, http.StatusBadRequest)
 		}
+	}
+}
+
+// TestNotesHandlerList_UncategorizedReturnsNullCategoryNotes 修复 P0-4：
+//
+//	前端 CategorySidebar "未分类"按钮写入 ?categoryId=0。
+//	当前 handler 跳过 0 + store 跳过 0 → URL 是"未分类"但实际返全部笔记（数据/UI 不一致）。
+//
+// 回归：handler 必须接受 categoryId=0，store.SearchNotes 翻译成 IS NULL。
+func TestNotesHandlerList_UncategorizedReturnsNullCategoryNotes(t *testing.T) {
+	catID := int64(1)
+	notesStore := &fakeNotesStore{}
+	notesStore.notes = append(notesStore.notes,
+		store.Note{ID: 1, Title: "Go 入门", CategoryID: &catID},
+		store.Note{ID: 2, Title: "无分类笔记 A", CategoryID: nil},
+		store.Note{ID: 3, Title: "无分类笔记 B", CategoryID: nil},
+	)
+	handler := NewHandler(notesStore, nil)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/notes?categoryId=0", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	assert.Equal(t, http.StatusOK, response.Code)
+
+	var body store.PaginatedNotes
+	assert.NoError(t, json.NewDecoder(response.Body).Decode(&body))
+	assert.Equal(t, 2, body.Total, "?categoryId=0 应只返 2 条无分类笔记")
+	assert.Len(t, body.Items, 2)
+	for _, item := range body.Items {
+		assert.Nil(t, item.CategoryID, "未分类结果里 CategoryID 应为 nil")
 	}
 }
 
