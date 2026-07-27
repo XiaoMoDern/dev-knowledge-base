@@ -28,6 +28,7 @@ declare module 'vue' {
     ElUpload: typeof import('element-plus/es')['ElUpload']
     ImportDialog: typeof import('./components/ImportDialog.vue')['default']
     NoteCard: typeof import('./components/NoteCard.vue')['default']
+    RichTextEditor: typeof import('./components/RichTextEditor.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
   }

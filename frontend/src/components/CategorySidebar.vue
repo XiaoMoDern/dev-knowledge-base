@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { listCategories, createCategory } from '../api/categories'
@@ -20,6 +20,32 @@ async function load() {
   } catch (e) {
     console.error('load categories:', e)
   }
+}
+
+// 从 URL 同步 activeCategoryId——P0-4 未分类高亮错修复：
+//
+//	URL 是 sidebar 激活状态的唯一事实源。
+//	  无 categoryId    → 全部分类  → activeCategoryId = null
+//	  ?categoryId=0   → 未分类    → activeCategoryId = 0
+//	  ?categoryId=N   → 具体分类  → activeCategoryId = N
+//
+// 之前 bug：
+//   1. onMounted 守卫 `cid !== '0'` + `parsed > 0`——硬刷新 ?categoryId=0 时
+//      activeCategoryId 保持 null，跟"全部分类"同时高亮
+//   2. 模板里"未分类"单独读 route.query.categoryId === '0'——跟 isActive(null) 来源不一致
+//   3. 没 watch URL 变化——前进/后退/外部导航活跃状态不动
+//
+// 修复：syncActiveFromURL 让 activeCategoryId 永远派生自 URL；模板统一用 isActive。
+function syncActiveFromURL() {
+  const cid = route.query.categoryId
+  if (typeof cid === 'string' && cid) {
+    const parsed = Number(cid)
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      activeCategoryId.value = parsed
+      return
+    }
+  }
+  activeCategoryId.value = null
 }
 
 function isActive(id: number | null): boolean {
@@ -60,14 +86,12 @@ async function onCreate() {
 
 onMounted(() => {
   load()
-  const cid = route.query.categoryId
-  if (cid && cid !== '0') {
-    const parsed = Number(cid)
-    if (Number.isFinite(parsed) && parsed > 0) {
-      activeCategoryId.value = parsed
-    }
-  }
+  syncActiveFromURL()
 })
+
+// 监听 URL 变化 → 同步 activeCategoryId（处理前进/后退/外部导航）
+// Vue watch 默认 lazy（不会立即触发），所以不会跟 onMounted 的 syncActiveFromURL 重复
+watch(() => route.query.categoryId, syncActiveFromURL)
 </script>
 
 <template>
@@ -84,7 +108,7 @@ onMounted(() => {
       </div>
       <div
         class="menu-item"
-        :class="{ active: route.query.categoryId === '0' }"
+        :class="{ active: isActive(0) }"
         @click="selectCategory(0)"
       >
         <span class="menu-icon">📂</span>

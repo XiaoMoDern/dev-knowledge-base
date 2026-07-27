@@ -57,9 +57,9 @@ async function load() {
   try {
     const cid = route.query.categoryId
     let categoryId: number | undefined
-    if (typeof cid === 'string' && cid !== '0' && cid) {
+    if (typeof cid === 'string' && cid) {
       const parsed = Number(cid)
-      if (Number.isFinite(parsed) && parsed > 0) categoryId = parsed
+      if (Number.isFinite(parsed) && parsed >= 0) categoryId = parsed
     }
     const q = searchKeyword.value || undefined
     const result = await searchNotes({ q, categoryId, page: page.value, pageSize: pageSize.value })

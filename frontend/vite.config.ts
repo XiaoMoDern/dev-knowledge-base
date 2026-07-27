@@ -22,6 +22,8 @@ export default defineConfig({
     }),
   ],
   server: {
+    host: '0.0.0.0', // 监听所有 IPv4 网卡，让局域网设备能通过 http://172.18.4.121:5173 访问
+    port: 5173,
     proxy: {
       '/api': 'http://127.0.0.1:8181',
     },

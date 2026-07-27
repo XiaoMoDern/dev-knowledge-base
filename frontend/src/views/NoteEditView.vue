@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getNote, createNote, updateNote } from '../api/notes'
 import { listCategories, createCategory } from '../api/categories'
+import RichTextEditor from '../components/RichTextEditor.vue'
 import type { Category } from '../api/types'
 
 const route = useRoute()
@@ -162,7 +163,7 @@ onMounted(() => {
         </el-form-item>
 
         <el-form-item label="内容">
-          <el-input v-model="content" type="textarea" :rows="12" placeholder="写点什么..." :disabled="saving" />
+          <RichTextEditor v-model="content" :placeholder="saving ? '保存中...' : '写点什么... 支持 Markdown 和富文本编辑'" />
         </el-form-item>
 
         <div style="display: flex; gap: 0.5rem;">
